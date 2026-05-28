@@ -1,0 +1,21 @@
+export const ROLES = {
+  SUPER_ADMIN: 'super_admin',
+  MANAGER: 'manager',
+  RECEPTIONIST: 'receptionist',
+  HOUSEKEEPING: 'housekeeping',
+  CASHIER: 'cashier'
+};
+
+export const roleAccess = {
+  dashboard: [ROLES.SUPER_ADMIN, ROLES.MANAGER, ROLES.RECEPTIONIST, ROLES.CASHIER],
+  masterData: [ROLES.SUPER_ADMIN, ROLES.MANAGER],
+  reservations: [ROLES.SUPER_ADMIN, ROLES.MANAGER, ROLES.RECEPTIONIST],
+  checkInOut: [ROLES.SUPER_ADMIN, ROLES.MANAGER, ROLES.RECEPTIONIST],
+  billing: [ROLES.SUPER_ADMIN, ROLES.MANAGER, ROLES.CASHIER],
+  housekeeping: [ROLES.SUPER_ADMIN, ROLES.MANAGER, ROLES.HOUSEKEEPING],
+  maintenance: [ROLES.SUPER_ADMIN, ROLES.MANAGER, ROLES.HOUSEKEEPING],
+  reports: [ROLES.SUPER_ADMIN, ROLES.MANAGER, ROLES.CASHIER],
+  settings: [ROLES.SUPER_ADMIN]
+};
+
+export const canAccess = (role, feature) => roleAccess[feature]?.includes(role);
