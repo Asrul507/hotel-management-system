@@ -5,7 +5,6 @@ import { canAccess } from '../utils/roles';
 const menus = [
   ['/', 'Dashboard', 'dashboard'],
   ['/master-settings', 'Master Setting', 'masterSettings'],
-  ['/rooms', 'Kamar HK', 'rooms'],
   ['/guests', 'Tamu', 'guests'],
   ['/forecast', 'Forecast', 'forecast'],
   ['/reservations', 'Reservasi', 'reservations'],

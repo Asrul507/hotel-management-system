@@ -435,20 +435,21 @@ insert into hotel_settings (hotel_name,address,phone,tax_percent,service_charge_
 select 'Hotel Management System','Jakarta','+62 21 0000',10,5
 where not exists (select 1 from hotel_settings);
 
-insert into room_types (code,name,base_rate,base_price,max_occupancy,facilities) values
-('STD','Standard',450000,450000,2,'["AC","WiFi","TV"]'),
-('DLX','Deluxe',700000,700000,2,'["AC","WiFi","TV","Mini Bar"]'),
-('STE','Suite',1250000,1250000,4,'["Living Room","Bathtub","Smart TV"]')
-on conflict (code) do update set
-  name = excluded.name,
-  base_rate = excluded.base_rate,
-  base_price = excluded.base_price,
-  max_occupancy = excluded.max_occupancy,
-  facilities = excluded.facilities,
-  updated_at = now();
+with seed_room_types (code, name, base_rate, base_price, max_occupancy, facilities) as (
+  values
+    ('STD','Standard',450000::numeric,450000::numeric,2,'["AC","WiFi","TV"]'::jsonb),
+    ('DLX','Deluxe',700000::numeric,700000::numeric,2,'["AC","WiFi","TV","Mini Bar"]'::jsonb),
+    ('STE','Suite',1250000::numeric,1250000::numeric,4,'["Living Room","Bathtub","Smart TV"]'::jsonb)
+)
+insert into room_types (code,name,base_rate,base_price,max_occupancy,facilities)
+select s.code, s.name, s.base_rate, s.base_price, s.max_occupancy, s.facilities
+from seed_room_types s
+where not exists (
+  select 1 from room_types rt where rt.code = s.code or rt.name = s.name
+);
 
 insert into rooms (room_number,room_type_id,floor,fo_status,hk_status,status)
 select '10'||g::text, rt.id, '1', 'available', 'VC', 'available'
 from generate_series(1,5) g
-cross join lateral (select id from room_types where code='STD' limit 1) rt
+cross join lateral (select id from room_types where code='STD' or name='Standard' order by case when code='STD' then 0 else 1 end limit 1) rt
 on conflict (room_number) do nothing;

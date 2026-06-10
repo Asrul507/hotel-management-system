@@ -20,6 +20,10 @@ function getSupabaseConfigError() {
     return 'VITE_SUPABASE_URL tidak valid. Gunakan URL Supabase yang diawali https://.'
   }
 
+  if (supabaseUrl.includes('/rest/v1')) {
+    return 'VITE_SUPABASE_URL tidak valid. Gunakan URL project Supabase saja, tanpa /rest/v1.'
+  }
+
   return ''
 }
 
