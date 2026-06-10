@@ -453,3 +453,23 @@ select '10'||g::text, rt.id, '1', 'available', 'VC', 'available'
 from generate_series(1,5) g
 cross join lateral (select id from room_types where code='STD' or name='Standard' order by case when code='STD' then 0 else 1 end limit 1) rt
 on conflict (room_number) do nothing;
+
+-- Hotel logic optimization indexes and compatibility checks (safe, no data deletion).
+create index if not exists reservations_room_dates_status_idx on reservations(room_id, check_in_date, check_out_date, status);
+create index if not exists reservations_status_dates_idx on reservations(status, check_in_date, check_out_date);
+create index if not exists stays_room_status_idx on stays(room_id, status);
+create index if not exists invoices_stay_status_idx on invoices(stay_id, status);
+create index if not exists payments_invoice_id_idx on payments(invoice_id);
+create index if not exists rooms_fo_status_idx on rooms(fo_status);
+create index if not exists rooms_hk_status_idx on rooms(hk_status);
+create index if not exists rooms_inventory_idx on rooms(is_active, fo_status, hk_status);
+create index if not exists guests_nik_idx on guests(nik);
+
+alter table rooms drop constraint if exists rooms_fo_status_check;
+alter table rooms add constraint rooms_fo_status_check check (fo_status in ('available','unavailable')) not valid;
+alter table rooms drop constraint if exists rooms_hk_status_check;
+alter table rooms add constraint rooms_hk_status_check check (hk_status in ('VR','VC','VD','OR','OC','OD','OOO','OOS','DND','SLEEP OUT','ONL')) not valid;
+alter table payments drop constraint if exists payments_positive_amount_check;
+alter table payments add constraint payments_positive_amount_check check (amount > 0) not valid;
+alter table invoices drop constraint if exists invoices_status_check;
+alter table invoices add constraint invoices_status_check check (status in ('unpaid','partial','paid','refunded')) not valid;
