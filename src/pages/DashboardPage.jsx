@@ -4,16 +4,17 @@ import { dashboardApi } from '../services/api';
 const money = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 });
 
 export default function DashboardPage() {
-  const [stats, setStats] = useState({ totalRooms: 0, occupied: 0, available: 0, dirty: 0, maintenance: 0, arrivalsToday: 0, departuresToday: 0, revenueToday: 0 });
+  const [stats, setStats] = useState({ totalRooms: 0, inventoryRooms: 0, occupied: 0, available: 0, dirty: 0, maintenance: 0, arrivalsToday: 0, departuresToday: 0, revenueToday: 0 });
   const [error, setError] = useState('');
 
   useEffect(() => {
     dashboardApi.stats().then(setStats).catch((err) => setError(err.message));
   }, []);
 
-  const occupancy = stats.totalRooms ? Math.round((stats.occupied / stats.totalRooms) * 100) : 0;
+  const occupancy = stats.inventoryRooms ? Math.round((stats.occupied / stats.inventoryRooms) * 100) : 0;
   const cards = [
-    ['Total Kamar', stats.totalRooms],
+    ['Total Kamar Fisik', stats.totalRooms],
+    ['Inventory Room', stats.inventoryRooms],
     ['Kamar Tersedia', stats.available],
     ['Kamar Terisi', stats.occupied],
     ['Kamar Kotor', stats.dirty],
