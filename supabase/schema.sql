@@ -256,7 +256,21 @@ update reservations set check_in_date = checkin_date where check_in_date is null
 update reservations set check_out_date = checkout_date where check_out_date is null and checkout_date is not null;
 update reservations set checkin_date = check_in_date where checkin_date is null and check_in_date is not null;
 update reservations set checkout_date = check_out_date where checkout_date is null and check_out_date is not null;
-update reservations set nights = greatest((check_out_date - check_in_date), 0) where check_in_date is not null and check_out_date is not null;
+-- Some older schemas define `nights` as a generated column, so only backfill it when it is a normal column.
+do $$ begin
+  if exists (
+    select 1
+    from pg_attribute
+    where attrelid = 'public.reservations'::regclass
+      and attname = 'nights'
+      and attgenerated = ''
+      and not attisdropped
+  ) then
+    update reservations
+    set nights = greatest((check_out_date - check_in_date), 0)
+    where check_in_date is not null and check_out_date is not null;
+  end if;
+end $$;
 update reservations set status = 'reserved' where status in ('booked','confirmed');
 create unique index if not exists reservations_number_unique on reservations(reservation_number) where reservation_number is not null;
 create unique index if not exists reservations_code_unique on reservations(reservation_code) where reservation_code is not null;
