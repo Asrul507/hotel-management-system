@@ -1,4 +1,4 @@
-import { supabase } from '../config/supabase';
+import { requireSupabase } from '../config/supabase';
 
 export const ROOM_STATUSES = ['available', 'occupied', 'dirty', 'cleaning', 'maintenance', 'out_of_order'];
 export const RESERVATION_STATUSES = ['booked', 'checked_in', 'checked_out', 'cancelled'];
@@ -56,7 +56,7 @@ const staySelect = `
 
 export const roomTypesApi = {
   async list() {
-    const { data, error } = await supabase.from('room_types').select('*').order('base_price');
+    const { data, error } = await requireSupabase().from('room_types').select('*').order('base_price');
     raise(error);
     return data || [];
   }
@@ -64,17 +64,17 @@ export const roomTypesApi = {
 
 export const roomsApi = {
   async list() {
-    const { data, error } = await supabase.from('rooms').select(roomSelect).order('room_number');
+    const { data, error } = await requireSupabase().from('rooms').select(roomSelect).order('room_number');
     raise(error);
     return data || [];
   },
   async create(payload) {
-    const { data, error } = await supabase.from('rooms').insert(payload).select(roomSelect).single();
+    const { data, error } = await requireSupabase().from('rooms').insert(payload).select(roomSelect).single();
     raise(error);
     return data;
   },
   async update(id, payload) {
-    const { data, error } = await supabase.from('rooms').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', id).select(roomSelect).single();
+    const { data, error } = await requireSupabase().from('rooms').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', id).select(roomSelect).single();
     raise(error);
     return data;
   },
@@ -85,23 +85,23 @@ export const roomsApi = {
 
 export const reservationsApi = {
   async list() {
-    const { data, error } = await supabase.from('reservations').select(reservationSelect).order('checkin_date', { ascending: false });
+    const { data, error } = await requireSupabase().from('reservations').select(reservationSelect).order('checkin_date', { ascending: false });
     raise(error);
     return data || [];
   },
   async arrivals(date = today()) {
-    const { data, error } = await supabase.from('reservations').select(reservationSelect).eq('checkin_date', date).in('status', ['booked', 'confirmed']).order('created_at');
+    const { data, error } = await requireSupabase().from('reservations').select(reservationSelect).eq('checkin_date', date).in('status', ['booked', 'confirmed']).order('created_at');
     raise(error);
     return data || [];
   },
   async create({ guest_name, phone, room_id, check_in_date, check_out_date, status = 'booked', deposit_amount = 0 }) {
-    const { data: room, error: roomError } = await supabase.from('rooms').select('id, room_type_id').eq('id', room_id).single();
+    const { data: room, error: roomError } = await requireSupabase().from('rooms').select('id, room_type_id').eq('id', room_id).single();
     raise(roomError);
 
-    const { data: guest, error: guestError } = await supabase.from('guests').insert({ full_name: guest_name, phone }).select('id').single();
+    const { data: guest, error: guestError } = await requireSupabase().from('guests').insert({ full_name: guest_name, phone }).select('id').single();
     raise(guestError);
 
-    const { data, error } = await supabase.from('reservations').insert({
+    const { data, error } = await requireSupabase().from('reservations').insert({
       reservation_code: reservationCode(),
       guest_id: guest.id,
       room_id,
@@ -115,7 +115,7 @@ export const reservationsApi = {
     return data;
   },
   async updateStatus(id, status) {
-    const { data, error } = await supabase.from('reservations').update({ status, updated_at: new Date().toISOString() }).eq('id', id).select(reservationSelect).single();
+    const { data, error } = await requireSupabase().from('reservations').update({ status, updated_at: new Date().toISOString() }).eq('id', id).select(reservationSelect).single();
     raise(error);
     return data;
   }
@@ -123,18 +123,18 @@ export const reservationsApi = {
 
 export const staysApi = {
   async list() {
-    const { data, error } = await supabase.from('stays').select(staySelect).order('created_at', { ascending: false });
+    const { data, error } = await requireSupabase().from('stays').select(staySelect).order('created_at', { ascending: false });
     raise(error);
     return data || [];
   },
   async active() {
-    const { data, error } = await supabase.from('stays').select(staySelect).eq('status', 'checked_in').order('created_at', { ascending: false });
+    const { data, error } = await requireSupabase().from('stays').select(staySelect).eq('status', 'checked_in').order('created_at', { ascending: false });
     raise(error);
     return data || [];
   },
   async checkIn(reservation) {
     const now = new Date().toISOString();
-    const { data: stay, error } = await supabase.from('stays').insert({
+    const { data: stay, error } = await requireSupabase().from('stays').insert({
       reservation_id: reservation.id,
       guest_id: reservation.guest_id,
       room_id: reservation.room_id,
@@ -150,7 +150,7 @@ export const staysApi = {
   },
   async checkOut(stay) {
     const now = new Date().toISOString();
-    const { data, error } = await supabase.from('stays').update({ checkout_at: now, status: 'checked_out', updated_at: now }).eq('id', stay.id).select(staySelect).single();
+    const { data, error } = await requireSupabase().from('stays').update({ checkout_at: now, status: 'checked_out', updated_at: now }).eq('id', stay.id).select(staySelect).single();
     raise(error);
 
     if (stay.reservation_id) await reservationsApi.updateStatus(stay.reservation_id, 'checked_out');
@@ -169,7 +169,7 @@ export const billingApi = {
     let invoice = stay.invoices?.[0];
 
     if (!invoice) {
-      const { data, error } = await supabase.from('invoices').insert({
+      const { data, error } = await requireSupabase().from('invoices').insert({
         stay_id: stay.id,
         invoice_number: invoiceNumber(),
         subtotal: total,
@@ -182,7 +182,7 @@ export const billingApi = {
       invoice = data;
     }
 
-    const { error: paymentError } = await supabase.from('payments').insert({
+    const { error: paymentError } = await requireSupabase().from('payments').insert({
       invoice_id: invoice.id,
       payment_method,
       amount: Number(amount || 0),
@@ -193,7 +193,7 @@ export const billingApi = {
     const nextPaid = billing.paid + Number(amount || 0);
     const nextBalance = Math.max(total - nextPaid, 0);
     const nextStatus = nextPaid <= 0 ? 'unpaid' : nextBalance > 0 ? 'partial' : 'paid';
-    const { error: invoiceError } = await supabase.from('invoices').update({
+    const { error: invoiceError } = await requireSupabase().from('invoices').update({
       subtotal: total,
       total_amount: total,
       balance_due: nextBalance,
@@ -206,7 +206,7 @@ export const billingApi = {
 
 export const housekeepingApi = {
   async rooms(status = 'all') {
-    const query = supabase.from('rooms').select(roomSelect).order('room_number');
+    const query = requireSupabase().from('rooms').select(roomSelect).order('room_number');
     if (status !== 'all') query.eq('status', status);
     const { data, error } = await query;
     raise(error);
@@ -215,7 +215,7 @@ export const housekeepingApi = {
   async updateRoomStatus(roomId, status) {
     const room = await roomsApi.updateStatus(roomId, status);
     if (['dirty', 'cleaning'].includes(status)) {
-      await supabase.from('housekeeping_tasks').insert({ room_id: roomId, status: status === 'dirty' ? 'dirty' : 'cleaning' });
+      await requireSupabase().from('housekeeping_tasks').insert({ room_id: roomId, status: status === 'dirty' ? 'dirty' : 'cleaning' });
     }
     return room;
   }
@@ -223,19 +223,19 @@ export const housekeepingApi = {
 
 export const maintenanceApi = {
   async list() {
-    const { data, error } = await supabase.from('maintenance_reports').select(`*, rooms(${roomSelect}), profiles(id, full_name)`).order('created_at', { ascending: false });
+    const { data, error } = await requireSupabase().from('maintenance_reports').select(`*, rooms(${roomSelect}), profiles(id, full_name)`).order('created_at', { ascending: false });
     raise(error);
     return data || [];
   },
   async create({ room_id, issue }) {
-    const { data, error } = await supabase.from('maintenance_reports').insert({ room_id, issue, status: 'reported' }).select(`*, rooms(${roomSelect})`).single();
+    const { data, error } = await requireSupabase().from('maintenance_reports').insert({ room_id, issue, status: 'reported' }).select(`*, rooms(${roomSelect})`).single();
     raise(error);
     await roomsApi.updateStatus(room_id, 'maintenance');
     return data;
   },
   async updateStatus(report, status, fix_notes = '') {
     const now = new Date().toISOString();
-    const { data, error } = await supabase.from('maintenance_reports').update({ status, fix_notes, updated_at: now }).eq('id', report.id).select(`*, rooms(${roomSelect})`).single();
+    const { data, error } = await requireSupabase().from('maintenance_reports').update({ status, fix_notes, updated_at: now }).eq('id', report.id).select(`*, rooms(${roomSelect})`).single();
     raise(error);
     if (status === 'done') await roomsApi.updateStatus(report.room_id, 'dirty');
     return data;
@@ -248,7 +248,7 @@ export const reportsApi = {
       roomsApi.list(),
       staysApi.list(),
       reservationsApi.arrivals(date),
-      supabase.from('reservations').select(reservationSelect).eq('checkout_date', date).in('status', ['checked_in', 'checked_out'])
+      requireSupabase().from('reservations').select(reservationSelect).eq('checkout_date', date).in('status', ['checked_in', 'checked_out'])
     ]);
     raise(departures.error);
 
@@ -272,7 +272,7 @@ export const reportsApi = {
 
 export const settingsApi = {
   async hotel() {
-    const { data, error } = await supabase.from('hotel_settings').select('*').limit(1).maybeSingle();
+    const { data, error } = await requireSupabase().from('hotel_settings').select('*').limit(1).maybeSingle();
     raise(error);
     return data;
   }
