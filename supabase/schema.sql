@@ -453,3 +453,156 @@ select '10'||g::text, rt.id, '1', 'available', 'VC', 'available'
 from generate_series(1,5) g
 cross join lateral (select id from room_types where code='STD' or name='Standard' order by case when code='STD' then 0 else 1 end limit 1) rt
 on conflict (room_number) do nothing;
+
+-- Hotel logic optimization indexes and compatibility checks (safe, no data deletion).
+create index if not exists reservations_room_dates_status_idx on reservations(room_id, check_in_date, check_out_date, status);
+create index if not exists reservations_status_dates_idx on reservations(status, check_in_date, check_out_date);
+create index if not exists stays_room_status_idx on stays(room_id, status);
+create index if not exists invoices_stay_status_idx on invoices(stay_id, status);
+create index if not exists payments_invoice_id_idx on payments(invoice_id);
+create index if not exists rooms_fo_status_idx on rooms(fo_status);
+create index if not exists rooms_hk_status_idx on rooms(hk_status);
+create index if not exists rooms_inventory_idx on rooms(is_active, fo_status, hk_status);
+create index if not exists guests_nik_idx on guests(nik);
+
+alter table rooms drop constraint if exists rooms_fo_status_check;
+alter table rooms add constraint rooms_fo_status_check check (fo_status in ('available','unavailable')) not valid;
+alter table rooms drop constraint if exists rooms_hk_status_check;
+alter table rooms add constraint rooms_hk_status_check check (hk_status in ('VR','VC','VD','OR','OC','OD','OOO','OOS','DND','SLEEP OUT','ONL')) not valid;
+alter table payments drop constraint if exists payments_positive_amount_check;
+alter table payments add constraint payments_positive_amount_check check (amount > 0) not valid;
+alter table invoices drop constraint if exists invoices_status_check;
+alter table invoices add constraint invoices_status_check check (status in ('unpaid','partial','paid','refunded')) not valid;
+
+-- Folio billing system (safe/idempotent, keeps legacy invoices intact).
+create table if not exists folios (
+  id uuid primary key default gen_random_uuid(),
+  folio_number text unique not null,
+  guest_id uuid references guests(id),
+  status text not null default 'open',
+  subtotal numeric(12,2) not null default 0,
+  discount_percent numeric(5,2) not null default 0,
+  discount_amount numeric(12,2) not null default 0,
+  tax_amount numeric(12,2) not null default 0,
+  service_amount numeric(12,2) not null default 0,
+  grand_total numeric(12,2) not null default 0,
+  paid_amount numeric(12,2) not null default 0,
+  balance_due numeric(12,2) not null default 0,
+  refund_amount numeric(12,2) not null default 0,
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table folios add column if not exists folio_number text;
+alter table folios add column if not exists guest_id uuid references guests(id);
+alter table folios add column if not exists status text not null default 'open';
+alter table folios add column if not exists subtotal numeric(12,2) not null default 0;
+alter table folios add column if not exists discount_percent numeric(5,2) not null default 0;
+alter table folios add column if not exists discount_amount numeric(12,2) not null default 0;
+alter table folios add column if not exists tax_amount numeric(12,2) not null default 0;
+alter table folios add column if not exists service_amount numeric(12,2) not null default 0;
+alter table folios add column if not exists grand_total numeric(12,2) not null default 0;
+alter table folios add column if not exists paid_amount numeric(12,2) not null default 0;
+alter table folios add column if not exists balance_due numeric(12,2) not null default 0;
+alter table folios add column if not exists refund_amount numeric(12,2) not null default 0;
+alter table folios add column if not exists notes text;
+
+create table if not exists folio_items (
+  id uuid primary key default gen_random_uuid(),
+  folio_id uuid not null references folios(id) on delete cascade,
+  reservation_id uuid references reservations(id),
+  stay_id uuid references stays(id),
+  room_id uuid references rooms(id),
+  item_type text not null,
+  description text not null,
+  qty numeric(10,2) not null default 1,
+  unit_price numeric(12,2) not null default 0,
+  line_total numeric(12,2) generated always as (qty * unit_price) stored,
+  posting_date date not null default current_date,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists folio_payments (
+  id uuid primary key default gen_random_uuid(),
+  folio_id uuid not null references folios(id) on delete cascade,
+  payment_type text not null default 'payment',
+  payment_group text not null,
+  payment_method text not null,
+  amount numeric(12,2) not null,
+  reference_number text,
+  card_or_account_number text,
+  notes text,
+  paid_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table reservations add column if not exists folio_id uuid references folios(id);
+alter table reservations add column if not exists cancellation_reason text;
+alter table reservations add column if not exists cancellation_fee numeric(12,2) not null default 0;
+alter table reservations add column if not exists no_show_fee numeric(12,2) not null default 0;
+alter table stays add column if not exists folio_id uuid references folios(id);
+
+create index if not exists folios_guest_id_idx on folios(guest_id);
+create index if not exists folios_status_idx on folios(status);
+create index if not exists folio_items_folio_id_idx on folio_items(folio_id);
+create index if not exists folio_payments_folio_id_idx on folio_payments(folio_id);
+create index if not exists folio_payments_paid_at_idx on folio_payments(paid_at);
+create index if not exists reservations_folio_id_idx on reservations(folio_id);
+create index if not exists stays_folio_id_idx on stays(folio_id);
+
+alter table audit_logs enable row level security;
+alter table folios enable row level security;
+alter table folio_items enable row level security;
+alter table folio_payments enable row level security;
+
+drop policy if exists "authenticated insert audit logs" on audit_logs;
+create policy "authenticated insert audit logs" on audit_logs for insert to authenticated with check (true);
+drop policy if exists "authenticated read audit logs" on audit_logs;
+create policy "authenticated read audit logs" on audit_logs for select to authenticated using (true);
+
+drop policy if exists "authenticated read folios" on folios;
+create policy "authenticated read folios" on folios for select to authenticated using (true);
+drop policy if exists "authenticated manage folios" on folios;
+create policy "authenticated manage folios" on folios for all to authenticated using (true) with check (true);
+drop policy if exists "authenticated read folio items" on folio_items;
+create policy "authenticated read folio items" on folio_items for select to authenticated using (true);
+drop policy if exists "authenticated manage folio items" on folio_items;
+create policy "authenticated manage folio items" on folio_items for all to authenticated using (true) with check (true);
+drop policy if exists "authenticated read folio payments" on folio_payments;
+create policy "authenticated read folio payments" on folio_payments for select to authenticated using (true);
+drop policy if exists "authenticated manage folio payments" on folio_payments;
+create policy "authenticated manage folio payments" on folio_payments for all to authenticated using (true) with check (true);
+
+alter table folios drop constraint if exists folios_status_check;
+alter table folios add constraint folios_status_check check (status in ('open','closed','cancelled','debt','refunded','partial_refund')) not valid;
+alter table folio_items drop constraint if exists folio_items_type_check;
+alter table folio_items add constraint folio_items_type_check check (item_type in ('room','restaurant','laundry','minibar','other','discount','cancellation_fee','refund','adjustment')) not valid;
+alter table folio_payments drop constraint if exists folio_payments_type_check;
+alter table folio_payments add constraint folio_payments_type_check check (payment_type in ('payment','refund')) not valid;
+alter table folio_payments drop constraint if exists folio_payments_group_check;
+alter table folio_payments add constraint folio_payments_group_check check (payment_group in ('cash','non_tunai')) not valid;
+alter table folio_payments drop constraint if exists folio_payments_method_check;
+alter table folio_payments add constraint folio_payments_method_check check (payment_method in ('cash','qris','transfer','debit_card','credit_card','e_wallet','other')) not valid;
+alter table folio_payments drop constraint if exists folio_payments_positive_amount_check;
+alter table folio_payments add constraint folio_payments_positive_amount_check check (amount > 0) not valid;
+create unique index if not exists folios_number_unique on folios(folio_number) where folio_number is not null;
+-- Folio table compatibility columns for partially-created environments.
+alter table folio_items add column if not exists reservation_id uuid references reservations(id);
+alter table folio_items add column if not exists stay_id uuid references stays(id);
+alter table folio_items add column if not exists room_id uuid references rooms(id);
+alter table folio_items add column if not exists item_type text;
+alter table folio_items add column if not exists description text;
+alter table folio_items add column if not exists qty numeric(10,2) not null default 1;
+alter table folio_items add column if not exists unit_price numeric(12,2) not null default 0;
+alter table folio_items add column if not exists posting_date date not null default current_date;
+alter table folio_payments add column if not exists payment_type text not null default 'payment';
+alter table folio_payments add column if not exists payment_group text;
+alter table folio_payments add column if not exists payment_method text;
+alter table folio_payments add column if not exists amount numeric(12,2);
+alter table folio_payments add column if not exists reference_number text;
+alter table folio_payments add column if not exists card_or_account_number text;
+alter table folio_payments add column if not exists notes text;
+alter table folio_payments add column if not exists paid_at timestamptz not null default now();
