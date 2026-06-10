@@ -1,4 +1,4 @@
-import { Link, Outlet } from 'react-router-dom';
+import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { canAccess } from '../utils/roles';
 
@@ -18,6 +18,7 @@ const menus = [
 
 export default function AppLayout() {
   const { profile, signOut } = useAuth();
+  const location = useLocation();
   const visibleMenus = menus.filter(([, , feature]) => canAccess(profile?.role, feature));
 
   return (
@@ -25,7 +26,7 @@ export default function AppLayout() {
       <aside className="sidebar">
         <h2>Hotel MS</h2>
         <small>{profile?.full_name} ({profile?.role})</small>
-        {visibleMenus.map(([to, label]) => <Link key={to} to={to}>{label}</Link>)}
+        {visibleMenus.map(([to, label]) => <Link key={to} className={location.pathname === to ? 'active' : ''} to={to}>{label}</Link>)}
         <button onClick={signOut}>Logout</button>
       </aside>
       <main className="content"><Outlet /></main>

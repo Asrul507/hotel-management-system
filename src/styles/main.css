@@ -49,3 +49,14 @@ button.small { width: auto; padding: .45rem .7rem; margin: 0; white-space: nowra
 .config-error-card { max-width: 760px; width: 100%; }
 .config-error-card code { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: .12rem .35rem; }
 .config-error-card li { margin-bottom: .45rem; }
+.sidebar a.active { background: #2563eb; color: #fff; }
+.button-link { display: inline-flex; align-items: center; justify-content: center; padding: .65rem .9rem; border-radius: 8px; background: #2563eb; color: #fff; text-decoration: none; font-weight: 700; }
+.filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .65rem; align-items: end; }
+.filter-grid input, .filter-grid select { margin-top: 0; }
+.filter-grid.compact { grid-template-columns: repeat(5, minmax(120px, 1fr)); min-width: 720px; }
+.negative { color: #fecaca; font-weight: 800; }
+.badge.VR, .badge.VC, .badge.available { background: #14532d; color: #bbf7d0; }
+.badge.VD, .badge.OD, .badge.unpaid { background: #7f1d1d; color: #fecaca; }
+.badge.OR, .badge.OC, .badge.checked_in, .badge.partial { background: #713f12; color: #fde68a; }
+.badge.OOO, .badge.OOS, .badge.unavailable, .badge.no_show { background: #3f3f46; color: #e4e4e7; }
+.badge.reserved { background: #1e3a8a; color: #bfdbfe; }
