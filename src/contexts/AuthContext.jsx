@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { supabase, supabaseConfigurationError, isSupabaseConfigured } from '../config/supabase';
+import { supabase, supabaseConfigError, isSupabaseConfigured } from '../config/supabase';
 
 const AuthContext = createContext(null);
 
@@ -16,7 +16,7 @@ export function AuthProvider({ children }) {
     async function initializeAuth() {
       try {
         if (!isSupabaseConfigured || !supabase) {
-          throw new Error(supabaseConfigurationError);
+          throw new Error(supabaseConfigError);
         }
 
         const { data, error } = await supabase.auth.getSession();
@@ -80,7 +80,7 @@ export function AuthProvider({ children }) {
   async function loadProfile(userId) {
     try {
       if (!isSupabaseConfigured || !supabase) {
-        throw new Error(supabaseConfigurationError);
+        throw new Error(supabaseConfigError);
       }
 
       const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
@@ -97,7 +97,7 @@ export function AuthProvider({ children }) {
 
   const unavailableClientError = () => ({
     data: null,
-    error: new Error(supabaseConfigurationError || 'Supabase belum dikonfigurasi.')
+    error: new Error(supabaseConfigError || 'Supabase belum dikonfigurasi.')
   });
 
   const value = useMemo(() => ({
@@ -105,6 +105,8 @@ export function AuthProvider({ children }) {
     profile,
     loading,
     authError,
+    configError: supabaseConfigError,
+    isSupabaseConfigured,
     signIn: (email, password) => {
       if (!isSupabaseConfigured || !supabase) return unavailableClientError();
       return supabase.auth.signInWithPassword({ email, password });

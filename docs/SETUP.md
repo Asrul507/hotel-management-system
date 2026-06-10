@@ -5,7 +5,7 @@
 2. Buka SQL Editor lalu jalankan `supabase/schema.sql`.
 3. Buka Authentication > Users, buat user admin pertama.
 4. Salin URL project dan anon key ke `.env`:
-   - `VITE_SUPABASE_URL=https://auzbecwawoejvlfszvdo.supabase.co`
+   - `VITE_SUPABASE_URL=https://your-project.supabase.co`
    - `VITE_SUPABASE_ANON_KEY=<anon-key>`
 5. Insert role admin pertama:
 ```sql
