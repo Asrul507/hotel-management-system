@@ -61,3 +61,13 @@ VITE_SUPABASE_URL=https://your-project.supabase.co
 ```
 
 Jangan gunakan URL REST seperti `/rest/v1` untuk `VITE_SUPABASE_URL`.
+
+## 6) Modul Operasional Baru
+
+Aplikasi menyediakan menu inti hotel management berikut:
+
+- **Master Setting** (`/master-settings`) untuk setup room type, harga dasar, max occupancy, nomor kamar, FO status, HK status, dan active/inactive.
+- **Tamu** (`/guests`) untuk database tamu dengan field nama lengkap, NIK, no HP, email, alamat, kota, tanggal lahir, jenis kelamin, catatan, blacklist, dan arsip soft delete.
+- **Forecast** (`/forecast`) untuk melihat forecast hunian per tanggal berdasarkan inventory room, OOO/OOS, occupied, expected arrival, expected departure, available room, dan occupancy percentage.
+
+Jalankan atau update `supabase/schema.sql` di Supabase SQL Editor sebelum memakai menu baru agar kolom `fo_status`, `hk_status`, `base_rate`, dan data tamu lengkap tersedia.
