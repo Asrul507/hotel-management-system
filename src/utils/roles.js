@@ -19,7 +19,7 @@ export const roleAccess = {
   housekeeping: [ROLES.SUPER_ADMIN, ROLES.MANAGER, ROLES.HOUSEKEEPING],
   maintenance: [ROLES.SUPER_ADMIN, ROLES.MANAGER, ROLES.HOUSEKEEPING],
   reports: [ROLES.SUPER_ADMIN, ROLES.MANAGER, ROLES.CASHIER],
-  settings: [ROLES.SUPER_ADMIN]
+  settings: [ROLES.SUPER_ADMIN, ROLES.MANAGER]
 };
 
 export const canAccess = (role, feature) => roleAccess[feature]?.includes(role);
