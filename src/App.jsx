@@ -3,6 +3,7 @@ import AppLayout from './layouts/AppLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
+import RoomsPage from './pages/RoomsPage';
 import ReservationsPage from './pages/ReservationsPage';
 import CheckinPage from './pages/CheckinPage';
 import BillingPage from './pages/BillingPage';
@@ -21,6 +22,7 @@ export default function App() {
     <Route path="/unauthorized" element={<UnauthorizedPage />} />
     <Route element={<ProtectedRoute allow={anyStaff}><AppLayout /></ProtectedRoute>}>
       <Route path="/" element={<DashboardPage />} />
+      <Route path="/rooms" element={<RoomsPage />} />
       <Route path="/reservations" element={<ReservationsPage />} />
       <Route path="/checkin" element={<CheckinPage />} />
       <Route path="/billing" element={<BillingPage />} />

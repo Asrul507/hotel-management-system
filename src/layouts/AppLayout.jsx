@@ -2,7 +2,7 @@ import { Link, Outlet } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 const menus = [
-  ['/', 'Dashboard'], ['/reservations', 'Reservasi'], ['/checkin', 'Check-in/out'], ['/billing', 'Billing'],
+  ['/', 'Dashboard'], ['/rooms', 'Kamar'], ['/reservations', 'Reservasi'], ['/checkin', 'Check-in/out'], ['/billing', 'Billing'],
   ['/housekeeping', 'Housekeeping'], ['/maintenance', 'Maintenance'], ['/reports', 'Reports'], ['/settings', 'Settings']
 ];
 
