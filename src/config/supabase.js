@@ -1,15 +1,43 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl =
-  import.meta.env.VITE_SUPABASE_URL ||
-  'https://auzbecwawoejvlfszvdo.supabase.co'
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim() || ''
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim() || ''
 
-const supabaseAnonKey =
-  import.meta.env.VITE_SUPABASE_ANON_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF1emJlY3dhd29lanZsZnN6dmRvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5NTE1MzIsImV4cCI6MjA5NTUyNzUzMn0.E-Br-wHWSZ2CMfsNjfIeFNiou21tEP5T_MsIiYUKJWQ'
+function getSupabaseConfigError() {
+  if (!supabaseUrl && !supabaseAnonKey) {
+    return 'Supabase belum dikonfigurasi. Set VITE_SUPABASE_URL dan VITE_SUPABASE_ANON_KEY di environment aplikasi.'
+  }
 
-if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
-  console.warn('Supabase env variables are missing. Using fallback hardcoded public anon config.')
+  if (!supabaseUrl) {
+    return 'VITE_SUPABASE_URL belum dikonfigurasi di environment aplikasi.'
+  }
+
+  if (!supabaseAnonKey) {
+    return 'VITE_SUPABASE_ANON_KEY belum dikonfigurasi di environment aplikasi.'
+  }
+
+  if (!supabaseUrl.startsWith('https://')) {
+    return 'VITE_SUPABASE_URL tidak valid. Gunakan URL Supabase yang diawali https://.'
+  }
+
+  if (supabaseUrl.includes('/rest/v1')) {
+    return 'VITE_SUPABASE_URL tidak valid. Gunakan URL project Supabase saja, tanpa /rest/v1.'
+  }
+
+  return ''
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const supabaseConfigError = getSupabaseConfigError()
+export const isSupabaseConfigured = !supabaseConfigError
+
+export const supabase = isSupabaseConfigured
+  ? createClient(supabaseUrl, supabaseAnonKey)
+  : null
+
+export function requireSupabase() {
+  if (!supabase) {
+    throw new Error(supabaseConfigError || 'Supabase belum dikonfigurasi.')
+  }
+
+  return supabase
+}
