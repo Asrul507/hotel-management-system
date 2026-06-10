@@ -19,6 +19,11 @@ Aplikasi sudah memiliki auth, routing, Supabase client yang aman berbasis enviro
 
 ## Perbaikan yang Dilakukan
 
+- Menambahkan RLS policy audit_logs insert/select agar error 403 saat audit log tidak muncul setelah schema dijalankan.
+- Menambahkan sistem folio (`folios`, `folio_items`, `folio_payments`) sebagai billing utama dengan payment cash/non tunai, discount persen, refund, cancellation fee, no-show fee, dan debt closing.
+- Mengubah reservation form agar nights menjadi input utama dan room_rate bisa dikosongkan/diedit manual tanpa dioverwrite.
+- Memperketat room picker agar hanya kamar ready VR/VC, FO available, aktif, dan tidak overlap reservation/stay yang muncul.
+- Menambahkan housekeeping bulk update dengan checkbox, select all, target HK status, notes, konfirmasi, dan audit aman.
 - Menambahkan shared business logic di service API untuk FO/HK status, reservasi, double booking, check-in/out, invoice, payment, forecast, report, dan audit log aman.
 - Mengoptimalkan Master Setting menjadi tab Hotel Settings, Room Types, dan Rooms dengan filter room number/type/FO/HK.
 - Mengubah reservasi agar memilih guest existing, room type aktif, room optional, validasi nights, blacklist warning, filter, edit, cancel, dan no-show.
@@ -56,7 +61,7 @@ Aplikasi sudah memiliki auth, routing, Supabase client yang aman berbasis enviro
 
 - Operasi multi-step dari frontend tidak atomic; jika step kedua gagal setelah step pertama sukses, data bisa perlu koreksi manual. Service sudah memberi error jelas, tetapi solusi production adalah RPC transaction.
 - Data legacy dengan `rooms.status` lama perlu dinormalisasi melalui `supabase/schema.sql` sebelum menjalankan app production.
-- RLS masih permissive untuk menjaga aplikasi tidak gagal; ini harus diperketat sebelum production multi-role yang sensitif.
+- RLS audit_logs dan folio sudah dibuat permissive untuk authenticated agar frontend stabil; production sebaiknya memperketat read/manage berdasarkan profiles.role.
 - Forecast memakai data dari client query dan dapat menjadi berat jika dataset besar; tahap berikutnya sebaiknya memakai view/materialized view/RPC.
 
 ## Checklist Manual Testing
@@ -80,4 +85,8 @@ Aplikasi sudah memiliki auth, routing, Supabase client yang aman berbasis enviro
 - Buka Dashboard dan pastikan angka konsisten dengan Forecast.
 - Login sebagai `housekeeping`, pastikan hanya bisa update HK status kamar FO available dan tidak bisa set OOO/OOS.
 - Login sebagai `cashier`, pastikan dapat membuka Billing/Reports dan tidak dapat membuka Master Setting.
+- Test nights input 1/2 malam dan pastikan checkout otomatis sinkron.
+- Test room_rate dikosongkan, diisi 0, dan diganti manual tanpa dioverwrite.
+- Test folio: tambah charge, discount persen, payment cash, payment non tunai dengan reference, refund, close sebagai debt.
+- Test housekeeping bulk update VD ke VC.
 - Jalankan `npm run build` dan pastikan berhasil.

@@ -5,11 +5,16 @@ export const HK_STATUSES = ['VR', 'VC', 'VD', 'OR', 'OC', 'OD', 'OOO', 'OOS', 'D
 export const ROOM_STATUSES = ['available', 'unavailable', ...HK_STATUSES];
 export const RESERVATION_STATUSES = ['reserved', 'checked_in', 'checked_out', 'cancelled', 'no_show'];
 export const INVOICE_STATUSES = ['unpaid', 'partial', 'paid', 'refunded'];
-export const PAYMENT_METHODS = ['cash', 'transfer', 'qris', 'debit', 'credit'];
+export const PAYMENT_GROUPS = ['cash', 'non_tunai'];
+export const NON_CASH_METHODS = ['qris', 'transfer', 'debit_card', 'credit_card', 'e_wallet', 'other'];
+export const PAYMENT_METHODS = ['cash', ...NON_CASH_METHODS];
+export const FOLIO_STATUSES = ['open', 'closed', 'cancelled', 'debt', 'refunded', 'partial_refund'];
+export const FOLIO_ITEM_TYPES = ['room', 'restaurant', 'laundry', 'minibar', 'other', 'discount', 'cancellation_fee', 'refund', 'adjustment'];
 
 export const today = () => new Date().toISOString().slice(0, 10);
 const reservationCode = () => `RSV-${Date.now()}`;
 const invoiceNumber = (prefix = 'INV') => `${prefix || 'INV'}-${Date.now()}`;
+const folioNumber = () => `FOL-${Date.now()}`;
 const moneyValue = (value) => Number(value || 0);
 export const isOutOfInventoryHk = (status) => ['OOO', 'OOS'].includes(status);
 export const isOccupiedHk = (status) => ['OR', 'OC', 'OD', 'DND', 'SLEEP OUT'].includes(status);
@@ -31,6 +36,14 @@ export function nightsBetween(startDate, endDate) {
   const end = new Date(`${endDate}T00:00:00`);
   const diff = Math.ceil((end - start) / 86400000);
   return Number.isFinite(diff) && diff > 0 ? diff : 0;
+}
+
+export function addDaysToDate(date, days) {
+  if (!date) return '';
+  const value = new Date(`${date}T00:00:00`);
+  if (!Number.isFinite(value.getTime())) return '';
+  value.setDate(value.getDate() + Number(days || 0));
+  return value.toISOString().slice(0, 10);
 }
 
 function eachDate(startDate, endDate) {
@@ -161,6 +174,7 @@ function normalizeGuestPayload(payload) {
 const roomSelect = '*, room_types(*)';
 const reservationSelect = '*, guests(*), rooms(*, room_types(*)), room_types(*)';
 const invoiceSelect = '*, invoice_items(*), payments(*)';
+const folioSelect = '*, guests(*), folio_items(*, rooms(*, room_types(*))), folio_payments(*)';
 const staySelect = '*, guests(*), rooms(*, room_types(*)), reservations(*), invoices(*, invoice_items(*), payments(*))';
 
 export async function logAuditEvent(action, entityType, entityId, changes = {}) {
@@ -247,14 +261,28 @@ export const roomsApi = {
     return (data || []).map(normalizeRoom);
   },
   async availableForStay({ check_in_date, check_out_date, room_type_id = '', exclude_reservation_id = '' }) {
-    const rooms = await this.list({ availableOnly: true, roomTypeId: room_type_id });
-    const active = await reservationsApi.list().catch(() => []);
-    return rooms.filter((room) => !active.some((reservation) => {
-      if (!reservation.room_id || reservation.room_id !== room.id) return false;
-      if (exclude_reservation_id && reservation.id === exclude_reservation_id) return false;
-      if (!['reserved', 'checked_in'].includes(reservation.status)) return false;
-      return datesOverlap(reservation.check_in_date, reservation.check_out_date, check_in_date, check_out_date);
-    }));
+    const rooms = (await this.list({ availableOnly: true, roomTypeId: room_type_id }))
+      .filter((room) => ['VR', 'VC'].includes(room.hk_status));
+    if (!check_in_date || !check_out_date || check_out_date <= check_in_date) return rooms;
+    const [activeReservations, activeStays] = await Promise.all([
+      reservationsApi.list().catch(() => []),
+      staysApi.active().catch(() => [])
+    ]);
+    return rooms.filter((room) => {
+      const reservationConflict = activeReservations.some((reservation) => {
+        if (!reservation.room_id || reservation.room_id !== room.id) return false;
+        if (exclude_reservation_id && reservation.id === exclude_reservation_id) return false;
+        if (!['reserved', 'checked_in'].includes(reservation.status)) return false;
+        return datesOverlap(reservation.check_in_date, reservation.check_out_date, check_in_date, check_out_date);
+      });
+      const stayConflict = activeStays.some((stay) => {
+        if (stay.room_id !== room.id || stay.status !== 'checked_in') return false;
+        const stayIn = stay.reservations?.check_in_date || stay.checkin_at?.slice(0, 10) || today();
+        const stayOut = stay.reservations?.check_out_date || stay.checkout_at?.slice(0, 10) || check_out_date;
+        return datesOverlap(stayIn, stayOut, check_in_date, check_out_date);
+      });
+      return !reservationConflict && !stayConflict;
+    });
   },
   async create(payload) {
     if (!payload.room_number?.trim()) throw new Error('Nomor kamar wajib diisi.');
@@ -361,10 +389,14 @@ async function validateReservation(payload, id = '') {
       throw new Error('Kamar tidak tersedia karena inactive, FO unavailable, atau OOO/OOS.');
     }
     if (payload.room_type_id && normalized.room_type_id !== payload.room_type_id) throw new Error('Kamar tidak sesuai dengan room type yang dipilih.');
+    if (!['VR', 'VC'].includes(normalized.hk_status)) throw new Error('Hanya kamar ready (VR/VC) yang boleh dipilih untuk reservasi/check-in.');
     const { data, error } = await requireSupabase().from('reservations').select('id,reservation_code,reservation_number,check_in_date,check_out_date,status').eq('room_id', payload.room_id).in('status', ['reserved', 'checked_in']);
     raise(error);
     const conflict = (data || []).find((reservation) => reservation.id !== id && datesOverlap(reservation.check_in_date, reservation.check_out_date, payload.check_in_date, payload.check_out_date));
     if (conflict) throw new Error(`Double booking ditolak. Kamar sudah dipakai oleh ${conflict.reservation_code || conflict.reservation_number}.`);
+    const activeStays = await staysApi.active().catch(() => []);
+    const stayConflict = activeStays.find((stay) => stay.room_id === payload.room_id && datesOverlap(stay.reservations?.check_in_date || stay.checkin_at?.slice(0, 10) || today(), stay.reservations?.check_out_date || payload.check_out_date, payload.check_in_date, payload.check_out_date));
+    if (stayConflict) throw new Error('Kamar sedang in-house dan tidak boleh dipilih.');
   }
 }
 
@@ -426,12 +458,12 @@ export const reservationsApi = {
       check_out_date: input.check_out_date,
       checkin_date: input.check_in_date,
       checkout_date: input.check_out_date,
-      nights,
+      nights: Math.max(Number(input.nights || nights || 1), 1),
       adults: Number(input.adults || 1),
       children: Number(input.children || 0),
       status: input.status || 'reserved',
       deposit_amount: moneyValue(input.deposit_amount),
-      room_rate: moneyValue(input.room_rate || roomRate(roomType)),
+      room_rate: input.room_rate === '' || input.room_rate == null ? 0 : moneyValue(input.room_rate),
       special_notes: input.special_notes || input.notes || null,
       notes: input.notes || input.special_notes || null
     };
@@ -443,15 +475,263 @@ export const reservationsApi = {
     raise(guestError);
     return this.create({ guest_id: guest.id, room_id, room_type_id: room.room_type_id, check_in_date, check_out_date, status, deposit_amount, room_rate: roomRate(room.room_types) });
   },
-  async updateStatus(reservation, status) {
+  async updateStatus(reservation, status, options = {}) {
     const current = typeof reservation === 'object' ? reservation : { id: reservation };
     if (!RESERVATION_STATUSES.includes(status)) throw new Error('Status reservasi tidak valid.');
     if (current.status === 'checked_out' && status !== 'checked_out') throw new Error('Reservasi checked-out tidak boleh diubah statusnya.');
-    if (['cancelled', 'no_show'].includes(status) && current.status === 'checked_out') throw new Error('Reservasi checked-out tidak bisa dibatalkan/no-show.');
-    const { data, error } = await requireSupabase().from('reservations').update({ status, updated_at: new Date().toISOString() }).eq('id', current.id).select(reservationSelect).single();
+    if (['cancelled', 'no_show'].includes(status) && ['checked_out', 'checked_in'].includes(current.status)) throw new Error('Reservasi yang sudah check-in/check-out tidak bisa dibatalkan/no-show.');
+    const body = { status, updated_at: new Date().toISOString() };
+    if (status === 'cancelled') {
+      body.cancellation_reason = options.cancellation_reason || null;
+      body.cancellation_fee = moneyValue(options.cancellation_fee);
+    }
+    if (status === 'no_show') body.no_show_fee = moneyValue(options.no_show_fee);
+    const { data, error } = await requireSupabase().from('reservations').update(body).eq('id', current.id).select(reservationSelect).single();
     raise(error);
-    await logAuditEvent(status === 'cancelled' ? 'cancel_reservation' : `mark_reservation_${status}`, 'reservations', current.id, { status });
-    return normalizeReservation(data);
+    const normalized = normalizeReservation(data);
+    if (status === 'cancelled') await foliosApi.applyCancellation(normalized, options).catch((err) => console.warn('Folio cancellation gagal:', err.message));
+    if (status === 'no_show') await foliosApi.applyNoShow(normalized, options).catch((err) => console.warn('Folio no-show gagal:', err.message));
+    await logAuditEvent(status === 'cancelled' ? 'cancel_reservation' : `mark_reservation_${status}`, 'reservations', current.id, { ...body, options });
+    return normalized;
+  }
+};
+
+async function upsertInvoiceForStay(stay, forceStatus = false) {
+  const normalizedStay = normalizeStay(stay);
+  const existing = normalizedStay.invoices?.[0];
+  const hotel = await hotelSettingsApi.get().catch(() => ({}));
+  const billing = calculateStayBilling(normalizedStay, hotel);
+  if (existing) {
+    const { data, error } = await requireSupabase().from('invoices').update({
+      subtotal: billing.subtotal,
+      tax_amount: billing.taxAmount,
+      service_amount: billing.serviceAmount,
+      deposit_applied: billing.depositApplied,
+      total_amount: billing.total,
+      balance_due: billing.balance,
+      status: forceStatus ? billing.paymentStatus : existing.status,
+      updated_at: new Date().toISOString()
+    }).eq('id', existing.id).select(invoiceSelect).single();
+    raise(error);
+    return data;
+  }
+
+  const { data: invoice, error } = await requireSupabase().from('invoices').insert({
+    stay_id: normalizedStay.id,
+    invoice_number: invoiceNumber(hotel.invoice_prefix),
+    subtotal: billing.subtotal,
+    tax_amount: billing.taxAmount,
+    service_amount: billing.serviceAmount,
+    deposit_applied: billing.depositApplied,
+    total_amount: billing.total,
+    balance_due: billing.balance,
+    status: billing.paymentStatus
+  }).select(invoiceSelect).single();
+  raise(error);
+
+  const { error: itemError } = await requireSupabase().from('invoice_items').insert({
+    invoice_id: invoice.id,
+    item_type: 'room_charge',
+    description: `Room charge ${billing.nights} malam`,
+    qty: billing.nights,
+    unit_price: billing.roomRate
+  });
+  if (itemError) console.warn('Invoice item gagal dibuat, invoice tetap tersimpan:', itemError.message);
+  await logAuditEvent('create_invoice', 'invoices', invoice.id, { stay_id: normalizedStay.id });
+  return invoice;
+}
+
+
+function normalizeFolio(folio) {
+  if (!folio) return folio;
+  const items = folio.folio_items || [];
+  const payments = folio.folio_payments || [];
+  return {
+    ...folio,
+    folio_items: items.map((item) => ({ ...item, line_total: moneyValue(item.line_total ?? (moneyValue(item.qty) * moneyValue(item.unit_price))) })),
+    folio_payments: payments
+  };
+}
+
+function validatePaymentPayload(payload) {
+  const paymentGroup = payload.payment_group || (payload.payment_method === 'cash' ? 'cash' : 'non_tunai');
+  const paymentMethod = paymentGroup === 'cash' ? 'cash' : payload.payment_method;
+  const amount = moneyValue(payload.amount);
+  if (!PAYMENT_GROUPS.includes(paymentGroup)) throw new Error('Payment group tidak valid.');
+  if (paymentGroup === 'cash' && paymentMethod !== 'cash') throw new Error('Cash harus memakai payment_method cash.');
+  if (paymentGroup === 'non_tunai' && !NON_CASH_METHODS.includes(paymentMethod)) throw new Error('Metode non tunai tidak valid.');
+  if (paymentGroup === 'non_tunai' && !payload.reference_number?.trim()) throw new Error('Nomor referensi wajib untuk pembayaran non tunai.');
+  if (amount <= 0) throw new Error('Nominal payment/refund harus lebih dari 0.');
+  return { paymentGroup, paymentMethod, amount };
+}
+
+export const foliosApi = {
+  async list({ status = 'all', search = '' } = {}) {
+    let query = requireSupabase().from('folios').select(folioSelect).order('created_at', { ascending: false });
+    if (status !== 'all') query = query.eq('status', status);
+    const { data, error } = await query;
+    raise(error);
+    let rows = (data || []).map(normalizeFolio);
+    if (search.trim()) {
+      const value = search.trim().toLowerCase();
+      rows = rows.filter((folio) => [folio.folio_number, folio.guests?.full_name, folio.status].some((field) => String(field || '').toLowerCase().includes(value)));
+    }
+    return rows;
+  },
+  async getFolio(id) {
+    const { data, error } = await requireSupabase().from('folios').select(folioSelect).eq('id', id).single();
+    raise(error);
+    return normalizeFolio(data);
+  },
+  async createFolio({ guest_id, notes = '' }) {
+    if (!guest_id) throw new Error('Guest wajib untuk folio.');
+    const { data, error } = await requireSupabase().from('folios').insert({ folio_number: folioNumber(), guest_id, notes, status: 'open' }).select(folioSelect).single();
+    if (error) throw new Error(parsePgError(error, 'Gagal membuat folio.'));
+    await logAuditEvent('create_folio', 'folios', data.id, { guest_id });
+    return normalizeFolio(data);
+  },
+  async ensureForReservation(reservation, stay = null) {
+    const normalized = normalizeReservation(reservation);
+    let folio = null;
+    if (normalized.folio_id) folio = await this.getFolio(normalized.folio_id).catch(() => null);
+    if (!folio) {
+      folio = await this.createFolio({ guest_id: normalized.guest_id, notes: `Folio ${normalized.reservation_code || normalized.reservation_number}` });
+      await requireSupabase().from('reservations').update({ folio_id: folio.id, updated_at: new Date().toISOString() }).eq('id', normalized.id);
+    }
+    if (stay?.id) await requireSupabase().from('stays').update({ folio_id: folio.id, updated_at: new Date().toISOString() }).eq('id', stay.id);
+    return folio;
+  },
+  async recalculateFolioTotals(folioId, nextStatus = '') {
+    const folio = await this.getFolio(folioId);
+    const hotel = await hotelSettingsApi.get().catch(() => ({}));
+    const items = folio.folio_items || [];
+    const payments = folio.folio_payments || [];
+    const chargeSubtotal = items
+      .filter((item) => !['discount', 'refund'].includes(item.item_type))
+      .reduce((sum, item) => sum + Math.max(moneyValue(item.line_total), 0), 0);
+    const discountPercent = Math.min(Math.max(moneyValue(folio.discount_percent), 0), 100);
+    const manualDiscount = items.filter((item) => item.item_type === 'discount').reduce((sum, item) => sum + Math.abs(moneyValue(item.line_total)), 0);
+    const discountAmount = Math.min(chargeSubtotal, (chargeSubtotal * discountPercent / 100) + manualDiscount);
+    const taxableBase = Math.max(chargeSubtotal - discountAmount, 0);
+    const taxAmount = taxableBase * moneyValue(hotel.tax_percent) / 100;
+    const serviceAmount = taxableBase * moneyValue(hotel.service_charge_percent) / 100;
+    const grandTotal = Math.max(taxableBase + taxAmount + serviceAmount, 0);
+    const paidAmount = payments.filter((payment) => payment.payment_type === 'payment').reduce((sum, payment) => sum + moneyValue(payment.amount), 0);
+    const refundPayments = payments.filter((payment) => payment.payment_type === 'refund').reduce((sum, payment) => sum + moneyValue(payment.amount), 0);
+    const refundItems = items.filter((item) => item.item_type === 'refund').reduce((sum, item) => sum + Math.abs(moneyValue(item.line_total)), 0);
+    const refundAmount = refundPayments + refundItems;
+    const balanceDue = Math.max(grandTotal - paidAmount + refundAmount, 0);
+    let status = nextStatus || folio.status || 'open';
+    if (status === 'closed' && balanceDue > 0) status = 'debt';
+    if (status === 'debt' && balanceDue <= 0) status = 'closed';
+    if (refundAmount >= paidAmount && paidAmount > 0 && nextStatus === 'refunded') status = 'refunded';
+    const body = { subtotal: chargeSubtotal, discount_amount: discountAmount, tax_amount: taxAmount, service_amount: serviceAmount, grand_total: grandTotal, paid_amount: paidAmount, refund_amount: refundAmount, balance_due: balanceDue, status, updated_at: new Date().toISOString() };
+    const { data, error } = await requireSupabase().from('folios').update(body).eq('id', folioId).select(folioSelect).single();
+    raise(error);
+    return normalizeFolio(data);
+  },
+  async addFolioItem(folioId, payload) {
+    if (!FOLIO_ITEM_TYPES.includes(payload.item_type)) throw new Error('Tipe item folio tidak valid.');
+    if (!payload.description?.trim()) throw new Error('Deskripsi item wajib diisi.');
+    const qty = moneyValue(payload.qty || 1);
+    const unitPrice = moneyValue(payload.unit_price);
+    if (qty <= 0) throw new Error('Qty harus lebih dari 0.');
+    const { data, error } = await requireSupabase().from('folio_items').insert({
+      folio_id: folioId,
+      reservation_id: payload.reservation_id || null,
+      stay_id: payload.stay_id || null,
+      room_id: payload.room_id || null,
+      item_type: payload.item_type,
+      description: payload.description.trim(),
+      qty,
+      unit_price: unitPrice,
+      posting_date: payload.posting_date || today()
+    }).select('*').single();
+    if (error) throw new Error(parsePgError(error, 'Gagal menambah item folio.'));
+    const folio = await this.recalculateFolioTotals(folioId);
+    await logAuditEvent('add_folio_item', 'folio_items', data.id, payload);
+    return folio;
+  },
+  async addRoomChargeOnce(folioId, reservation, stay = null) {
+    const folio = await this.getFolio(folioId);
+    const exists = (folio.folio_items || []).some((item) => item.item_type === 'room' && item.reservation_id === reservation.id && (!stay?.id || item.stay_id === stay.id));
+    if (exists) return folio;
+    const nights = Math.max(Number(reservation.nights || nightsBetween(reservation.check_in_date, reservation.check_out_date) || 1), 1);
+    return this.addFolioItem(folioId, {
+      reservation_id: reservation.id,
+      stay_id: stay?.id || null,
+      room_id: stay?.room_id || reservation.room_id || null,
+      item_type: 'room',
+      description: `Room charge ${reservation.rooms?.room_number || ''} x ${nights} malam`,
+      qty: nights,
+      unit_price: moneyValue(reservation.room_rate)
+    });
+  },
+  async addFolioPayment(folioId, payload) {
+    const { paymentGroup, paymentMethod, amount } = validatePaymentPayload(payload);
+    const folio = await this.getFolio(folioId);
+    if (payload.payment_type !== 'refund' && amount > moneyValue(folio.balance_due) && moneyValue(folio.balance_due) > 0) throw new Error('Payment melebihi balance due.');
+    const { data, error } = await requireSupabase().from('folio_payments').insert({
+      folio_id: folioId,
+      payment_type: payload.payment_type || 'payment',
+      payment_group: paymentGroup,
+      payment_method: paymentMethod,
+      amount,
+      reference_number: payload.reference_number || null,
+      card_or_account_number: payload.card_or_account_number || null,
+      notes: payload.notes || null,
+      paid_at: new Date().toISOString()
+    }).select('*').single();
+    if (error) throw new Error(parsePgError(error, 'Gagal menyimpan payment folio.'));
+    const updated = await this.recalculateFolioTotals(folioId, payload.payment_type === 'refund' ? 'refunded' : '');
+    await logAuditEvent(payload.payment_type === 'refund' ? 'refund_folio' : 'add_folio_payment', 'folio_payments', data.id, payload);
+    return updated;
+  },
+  async updateDiscount(folioId, discount_percent, role = '') {
+    const folio = await this.getFolio(folioId);
+    if (['closed', 'cancelled', 'refunded'].includes(folio.status) && !['super_admin', 'manager'].includes(role)) throw new Error('Discount folio closed hanya bisa diubah manager/super admin.');
+    const percent = moneyValue(discount_percent);
+    if (percent < 0 || percent > 100) throw new Error('Discount persen harus 0 - 100.');
+    const { error } = await requireSupabase().from('folios').update({ discount_percent: percent, updated_at: new Date().toISOString() }).eq('id', folioId);
+    raise(error);
+    const updated = await this.recalculateFolioTotals(folioId);
+    await logAuditEvent('update_folio_discount', 'folios', folioId, { discount_percent: percent });
+    return updated;
+  },
+  async closeFolio(folioId) {
+    const updated = await this.recalculateFolioTotals(folioId, 'closed');
+    await logAuditEvent(updated.status === 'debt' ? 'close_folio_debt' : 'close_folio', 'folios', folioId, { status: updated.status });
+    return updated;
+  },
+  async cancelFolio(folioId, notes = '') {
+    const { error } = await requireSupabase().from('folios').update({ status: 'cancelled', notes, updated_at: new Date().toISOString() }).eq('id', folioId);
+    raise(error);
+    await logAuditEvent('cancel_folio', 'folios', folioId, { notes });
+    return this.getFolio(folioId);
+  },
+  async refundFolio(folioId, payload) {
+    const folio = await this.getFolio(folioId);
+    const amount = moneyValue(payload.amount);
+    if (amount <= 0) throw new Error('Nominal refund harus lebih dari 0.');
+    if (amount > moneyValue(folio.paid_amount) - moneyValue(folio.refund_amount)) throw new Error('Refund tidak boleh melebihi paid amount yang belum direfund.');
+    if (!payload.notes?.trim()) throw new Error('Alasan refund wajib diisi.');
+    return this.addFolioPayment(folioId, { ...payload, payment_type: 'refund', amount });
+  },
+  async applyCancellation(reservation, options = {}) {
+    const fee = moneyValue(options.cancellation_fee);
+    const folio = await this.ensureForReservation(reservation);
+    if (moneyValue(reservation.deposit_amount) > 0 && !(folio.folio_payments || []).some((payment) => payment.notes === `Deposit ${reservation.reservation_code}`)) {
+      await this.addFolioPayment(folio.id, { payment_group: 'cash', payment_method: 'cash', amount: reservation.deposit_amount, notes: `Deposit ${reservation.reservation_code}` });
+    }
+    if (fee > 0) await this.addFolioItem(folio.id, { reservation_id: reservation.id, item_type: 'cancellation_fee', description: `Cancellation fee ${reservation.reservation_code}`, qty: 1, unit_price: fee });
+    if (options.refund_amount) await this.refundFolio(folio.id, { amount: options.refund_amount, payment_group: options.payment_group || 'cash', payment_method: options.payment_method || 'cash', reference_number: options.reference_number || '', notes: options.cancellation_reason || 'Cancellation refund' });
+    return fee > 0 ? this.recalculateFolioTotals(folio.id) : this.cancelFolio(folio.id, options.cancellation_reason || 'Reservation cancelled');
+  },
+  async applyNoShow(reservation, options = {}) {
+    const fee = moneyValue(options.no_show_fee);
+    if (fee <= 0) return null;
+    const folio = await this.ensureForReservation(reservation);
+    return this.addFolioItem(folio.id, { reservation_id: reservation.id, item_type: 'cancellation_fee', description: `No-show fee ${reservation.reservation_code}`, qty: 1, unit_price: fee });
   }
 };
 
@@ -539,8 +819,14 @@ export const staysApi = {
     }
     await reservationsApi.updateStatus({ id: normalized.id, status: normalized.status }, 'checked_in');
     await requireSupabase().from('reservations').update({ room_id, updated_at: now }).eq('id', normalized.id);
+    const reservationForFolio = normalizeReservation({ ...normalized, room_id, rooms: normalizeRoom(stay.rooms) });
+    const folio = await foliosApi.ensureForReservation(reservationForFolio, stay);
+    await foliosApi.addRoomChargeOnce(folio.id, reservationForFolio, stay);
+    if (moneyValue(normalized.deposit_amount) > 0 && !(folio.folio_payments || []).some((payment) => payment.notes === `Deposit ${normalized.reservation_code}`)) {
+      await foliosApi.addFolioPayment(folio.id, { payment_group: 'cash', payment_method: 'cash', amount: normalized.deposit_amount, notes: `Deposit ${normalized.reservation_code}` });
+    }
     await roomsApi.updateHkStatus({ id: room_id, fo_status: 'available' }, 'OC', { role: 'manager' });
-    await logAuditEvent('check_in', 'stays', stay.id, { reservation_id: normalized.id, room_id });
+    await logAuditEvent('check_in', 'stays', stay.id, { reservation_id: normalized.id, room_id, folio_id: folio.id });
     return normalizeStay(stay);
   },
   async checkOut(stay) {
@@ -551,8 +837,10 @@ export const staysApi = {
     raise(error);
     if (normalized.reservation_id) await reservationsApi.updateStatus({ id: normalized.reservation_id, status: 'checked_in' }, 'checked_out');
     await roomsApi.updateHkStatus({ id: normalized.room_id, fo_status: 'available' }, 'VD', { role: 'manager' });
+    const folio = normalized.folio_id ? await foliosApi.getFolio(normalized.folio_id).catch(() => null) : await foliosApi.ensureForReservation(normalized.reservations || { ...normalized, id: normalized.reservation_id }, normalized).catch(() => null);
+    if (folio) await foliosApi.closeFolio(folio.id).catch((err) => console.warn('Close folio saat check-out gagal:', err.message));
     const invoice = await upsertInvoiceForStay({ ...normalizeStay(data), invoices: normalized.invoices || [] }, true);
-    await logAuditEvent('check_out', 'stays', normalized.id, { invoice_id: invoice?.id });
+    await logAuditEvent('check_out', 'stays', normalized.id, { invoice_id: invoice?.id, folio_id: folio?.id });
     return normalizeStay(data);
   }
 };
@@ -628,6 +916,15 @@ export const housekeepingApi = {
   },
   async updateRoomStatus(room, hk_status, options = {}) {
     return roomsApi.updateHkStatus(room, hk_status, options);
+  },
+  async bulkUpdate(rooms, hk_status, options = {}) {
+    if (!Array.isArray(rooms) || rooms.length === 0) throw new Error('Pilih kamar untuk bulk update.');
+    const updated = [];
+    for (const room of rooms) {
+      updated.push(await roomsApi.updateHkStatus(room, hk_status, options));
+    }
+    await logAuditEvent('bulk_update_housekeeping', 'rooms', null, { room_ids: rooms.map((room) => room.id), hk_status });
+    return updated;
   }
 };
 
@@ -695,11 +992,10 @@ export const reportsApi = {
   async summary(date = today()) {
     const forecast = await forecastApi.byDateRange(date, date);
     const todayRow = forecast.rows[0] || {};
-    const [rooms, stays] = await Promise.all([roomsApi.list().catch(() => []), staysApi.list().catch(() => [])]);
-    const invoices = stays.flatMap((stay) => stay.invoices || []);
-    const payments = invoices.flatMap((invoice) => invoice.payments || []);
-    const revenueToday = payments.filter((payment) => payment.paid_at?.slice(0, 10) === date).reduce((total, payment) => total + moneyValue(payment.amount), 0);
-    const outstandingBalance = invoices.reduce((total, invoice) => total + moneyValue(invoice.balance_due), 0);
+    const [rooms, folios] = await Promise.all([roomsApi.list().catch(() => []), foliosApi.list().catch(() => [])]);
+    const payments = folios.flatMap((folio) => folio.folio_payments || []);
+    const revenueToday = payments.filter((payment) => payment.payment_type === 'payment' && payment.paid_at?.slice(0, 10) === date).reduce((total, payment) => total + moneyValue(payment.amount), 0);
+    const outstandingBalance = folios.filter((folio) => folio.status === 'debt' || moneyValue(folio.balance_due) > 0).reduce((total, folio) => total + moneyValue(folio.balance_due), 0);
     return {
       totalRooms: todayRow.total_rooms || 0,
       inventoryRooms: todayRow.inventory_rooms || 0,
@@ -716,20 +1012,25 @@ export const reportsApi = {
     };
   },
   async byDateRange(startDate, endDate) {
-    const [forecast, stays, rooms, reservations] = await Promise.all([
+    const [forecast, rooms, reservations, folios] = await Promise.all([
       forecastApi.byDateRange(startDate, endDate),
-      staysApi.list().catch(() => []),
       roomsApi.list().catch(() => []),
-      reservationsApi.list({ startDate, endDate }).catch(() => [])
+      reservationsApi.list({ startDate, endDate }).catch(() => []),
+      foliosApi.list().catch(() => [])
     ]);
-    const invoices = stays.flatMap((stay) => stay.invoices || []);
-    const payments = invoices.flatMap((invoice) => invoice.payments || []);
+    const payments = folios.flatMap((folio) => folio.folio_payments || []);
+    const revenuePayments = payments.filter((payment) => payment.payment_type === 'payment');
+    const refundPayments = payments.filter((payment) => payment.payment_type === 'refund');
+    const methods = PAYMENT_METHODS.map((method) => ({ method, amount: revenuePayments.filter((payment) => payment.payment_method === method).reduce((total, payment) => total + moneyValue(payment.amount), 0) }));
     return {
       occupancy: forecast.rows,
       revenue: {
-        invoice_total: invoices.reduce((total, invoice) => total + moneyValue(invoice.total_amount), 0),
-        payment_collected: payments.reduce((total, payment) => total + moneyValue(payment.amount), 0),
-        outstanding_balance: invoices.reduce((total, invoice) => total + moneyValue(invoice.balance_due), 0)
+        invoice_total: folios.reduce((total, folio) => total + moneyValue(folio.grand_total), 0),
+        payment_collected: revenuePayments.reduce((total, payment) => total + moneyValue(payment.amount), 0),
+        outstanding_balance: folios.reduce((total, folio) => total + moneyValue(folio.balance_due), 0),
+        refund_total: refundPayments.reduce((total, payment) => total + moneyValue(payment.amount), 0),
+        cancellation_total: folios.flatMap((folio) => folio.folio_items || []).filter((item) => item.item_type === 'cancellation_fee').reduce((total, item) => total + moneyValue(item.line_total), 0),
+        payment_methods: methods
       },
       arrivalsDepartures: {
         expected_arrival: reservations.filter((reservation) => reservation.status === 'reserved').length,
