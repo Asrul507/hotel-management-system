@@ -1,14 +1,9 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase, supabaseConfigError, isSupabaseConfigured } from '../config/supabase';
+import { getFriendlySupabaseError, isRateLimitError } from '../utils/supabaseError';
 
 const AuthContext = createContext(null);
 const AUTH_TIMEOUT_MS = 15000;
-
-function authLog(event, detail = {}) {
-  const payload = Object.keys(detail).length ? detail : undefined;
-  if (event === 'AUTH_ERROR') console.warn(event, payload || '');
-  else console.info(event, payload || '');
-}
 
 function withTimeout(promise, label, timeoutMs = AUTH_TIMEOUT_MS) {
   let timer;
@@ -26,138 +21,179 @@ export function AuthProvider({ children }) {
   const [authError, setAuthError] = useState(null);
   const [profileError, setProfileError] = useState(null);
   const authRequestRef = useRef(0);
+  const initStartedRef = useRef(false);
+  const mountedRef = useRef(false);
+  const loadedProfileUserIdRef = useRef(null);
+  const profileRequestUserIdRef = useRef(null);
+  const profileRef = useRef(null);
+  const sessionUserIdRef = useRef(null);
 
-  useEffect(() => {
-    let isMounted = true;
-    let subscription;
+  const unavailableClientError = useCallback(() => ({
+    data: null,
+    error: new Error(supabaseConfigError || 'Supabase belum dikonfigurasi.')
+  }), []);
 
-    async function loadProfile(userId, requestId = authRequestRef.current) {
-      if (!isSupabaseConfigured || !supabase) {
-        throw new Error(supabaseConfigError || 'Supabase belum dikonfigurasi.');
-      }
+  const loadProfile = useCallback(async (userId, options = {}) => {
+    const { force = false, requestId = authRequestRef.current } = options;
 
+    if (!userId) {
+      loadedProfileUserIdRef.current = null;
+      profileRequestUserIdRef.current = null;
+      profileRef.current = null;
+      setProfile(null);
+      return null;
+    }
+
+    if (!force && loadedProfileUserIdRef.current === userId && profileRef.current) {
+      setProfileError(null);
+      return profileRef.current;
+    }
+
+    if (!isSupabaseConfigured || !supabase) {
+      throw new Error(supabaseConfigError || 'Supabase belum dikonfigurasi.');
+    }
+
+    profileRequestUserIdRef.current = userId;
+
+    try {
       const { data, error } = await withTimeout(
         supabase.from('profiles').select('*').eq('id', userId).maybeSingle(),
         'AUTH_PROFILE_LOADED'
       );
 
-      if (!isMounted || requestId !== authRequestRef.current) return null;
+      if (!mountedRef.current || requestId !== authRequestRef.current) return null;
       if (error) throw error;
 
       if (!data) {
-        const message = 'Profile akun tidak ditemukan. Hubungi admin untuk membuat profile dan role.';
+        loadedProfileUserIdRef.current = null;
+        profileRef.current = null;
         setProfile(null);
-        setProfileError(message);
-        authLog('AUTH_ERROR', { step: 'profile_missing', userId });
+        setProfileError('Profile akun tidak ditemukan. Hubungi admin untuk membuat profile dan role.');
         return null;
       }
 
+      loadedProfileUserIdRef.current = userId;
+      profileRef.current = data;
       setProfile(data);
       setProfileError(null);
-      authLog('AUTH_PROFILE_LOADED', { userId, role: data.role });
       return data;
+    } catch (error) {
+      if (!mountedRef.current || requestId !== authRequestRef.current) return null;
+      const message = getFriendlySupabaseError(error, 'Gagal memuat profile akun. Silakan coba lagi.');
+      if (!isRateLimitError(error)) loadedProfileUserIdRef.current = null;
+      setProfileError(message);
+      throw new Error(message);
+    } finally {
+      if (profileRequestUserIdRef.current === userId) profileRequestUserIdRef.current = null;
+    }
+  }, []);
+
+  const applySession = useCallback(async (nextSession, _source, options = {}) => {
+    const { requestId = authRequestRef.current, forceProfile = false } = options;
+    if (!mountedRef.current || requestId !== authRequestRef.current) return;
+
+    sessionUserIdRef.current = nextSession?.user?.id || null;
+    setSession(nextSession || null);
+    setAuthError(null);
+
+    if (nextSession?.user) {
+      await loadProfile(nextSession.user.id, { force: forceProfile, requestId });
+      return;
     }
 
-    async function applySession(nextSession, source, requestId = authRequestRef.current) {
-      if (!isMounted || requestId !== authRequestRef.current) return;
+    loadedProfileUserIdRef.current = null;
+    profileRequestUserIdRef.current = null;
+    profileRef.current = null;
+    setProfile(null);
+    setProfileError(null);
+  }, [loadProfile]);
 
-      setSession(nextSession || null);
-      setAuthError(null);
-      setProfileError(null);
+  const initializeAuth = useCallback(async ({ force = false } = {}) => {
+    if (initStartedRef.current && !force) return;
+    initStartedRef.current = true;
 
-      if (nextSession?.user) {
-        authLog('AUTH_SESSION_FOUND', { source, userId: nextSession.user.id });
-        await loadProfile(nextSession.user.id, requestId);
-      } else {
-        setProfile(null);
+    const requestId = authRequestRef.current + 1;
+    authRequestRef.current = requestId;
+    setLoading(true);
+    setAuthError(null);
+    if (force) setProfileError(null);
+
+    try {
+      if (!isSupabaseConfigured || !supabase) {
+        throw new Error(supabaseConfigError || 'Supabase belum dikonfigurasi.');
       }
-    }
 
-    async function initializeAuth() {
-      const requestId = authRequestRef.current + 1;
-      authRequestRef.current = requestId;
-      authLog('AUTH_INIT', { requestId });
-      setLoading(true);
-      setAuthError(null);
-      setProfileError(null);
+      const { data, error } = await withTimeout(supabase.auth.getSession(), 'AUTH_INIT');
+      if (!mountedRef.current || requestId !== authRequestRef.current) return;
+      if (error) throw error;
 
-      try {
-        if (!isSupabaseConfigured || !supabase) {
-          throw new Error(supabaseConfigError || 'Supabase belum dikonfigurasi.');
-        }
-
-        const { data, error } = await withTimeout(supabase.auth.getSession(), 'AUTH_INIT');
-        if (!isMounted || requestId !== authRequestRef.current) return;
-        if (error) throw error;
-
-        await applySession(data?.session || null, 'initial', requestId);
-      } catch (error) {
-        if (!isMounted || requestId !== authRequestRef.current) return;
-        const message = error.message || 'Gagal memuat sesi login. Silakan coba lagi.';
+      await applySession(data?.session || null, 'initial', { requestId, forceProfile: force });
+    } catch (error) {
+      if (!mountedRef.current || requestId !== authRequestRef.current) return;
+      const message = getFriendlySupabaseError(error, 'Gagal memuat sesi login. Silakan coba lagi.');
+      setAuthError(message);
+      if (!isRateLimitError(error)) {
+        sessionUserIdRef.current = null;
         setSession(null);
+        profileRef.current = null;
         setProfile(null);
-        setAuthError(message);
-        setProfileError(null);
-        authLog('AUTH_ERROR', { step: 'initialize', message });
-      } finally {
-        if (isMounted && requestId === authRequestRef.current) {
-          setLoading(false);
-          authLog('AUTH_DONE', { requestId });
-        }
+        loadedProfileUserIdRef.current = null;
       }
+    } finally {
+      if (mountedRef.current && requestId === authRequestRef.current) setLoading(false);
+    }
+  }, [applySession]);
+
+  const handleAuthStateChange = useCallback((event, nextSession) => {
+    if (event === 'INITIAL_SESSION') return;
+
+    const currentUserId = sessionUserIdRef.current;
+    const nextUserId = nextSession?.user?.id || null;
+    if (event === 'TOKEN_REFRESHED' && currentUserId === nextUserId) {
+      sessionUserIdRef.current = nextUserId;
+      setSession(nextSession || null);
+      return;
     }
 
-    function handleAuthStateChange(event, nextSession) {
-      const requestId = authRequestRef.current + 1;
-      authRequestRef.current = requestId;
-      authLog('AUTH_INIT', { requestId, event });
-      setLoading(true);
-      setAuthError(null);
-      setProfileError(null);
+    const requestId = authRequestRef.current + 1;
+    authRequestRef.current = requestId;
+    setLoading(true);
+    setAuthError(null);
 
-      // Avoid running Supabase queries directly inside onAuthStateChange callback.
-      window.setTimeout(async () => {
-        try {
-          await applySession(nextSession || null, event, requestId);
-        } catch (error) {
-          if (!isMounted || requestId !== authRequestRef.current) return;
-          const message = error.message || 'Gagal memperbarui sesi login. Silakan coba lagi.';
-          setProfile(null);
-          setAuthError(message);
-          setProfileError(null);
-          authLog('AUTH_ERROR', { step: 'auth_state_change', event, message });
-        } finally {
-          if (isMounted && requestId === authRequestRef.current) {
-            setLoading(false);
-            authLog('AUTH_DONE', { requestId, event });
-          }
-        }
-      }, 0);
-    }
+    window.setTimeout(async () => {
+      try {
+        await applySession(nextSession || null, event, { requestId });
+      } catch (error) {
+        if (!mountedRef.current || requestId !== authRequestRef.current) return;
+        const message = getFriendlySupabaseError(error, 'Gagal memperbarui sesi login. Silakan coba lagi.');
+        if (nextSession?.user) setProfileError(message);
+        else setAuthError(message);
+      } finally {
+        if (mountedRef.current && requestId === authRequestRef.current) setLoading(false);
+      }
+    }, 0);
+  }, [applySession]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    let subscription;
 
     if (isSupabaseConfigured && supabase) {
       try {
         const { data } = supabase.auth.onAuthStateChange(handleAuthStateChange);
         subscription = data?.subscription;
       } catch (error) {
-        const message = error.message || 'Gagal memasang listener autentikasi. Silakan coba lagi.';
-        setAuthError(message);
-        authLog('AUTH_ERROR', { step: 'listener', message });
+        setAuthError(getFriendlySupabaseError(error, 'Gagal memasang listener autentikasi. Silakan coba lagi.'));
       }
     }
 
     initializeAuth();
 
     return () => {
-      isMounted = false;
+      mountedRef.current = false;
       subscription?.unsubscribe();
     };
-  }, []);
-
-  const unavailableClientError = () => ({
-    data: null,
-    error: new Error(supabaseConfigError || 'Supabase belum dikonfigurasi.')
-  });
+  }, [handleAuthStateChange, initializeAuth]);
 
   const value = useMemo(() => ({
     session,
@@ -167,12 +203,24 @@ export function AuthProvider({ children }) {
     profileError,
     configError: supabaseConfigError,
     isSupabaseConfigured,
+    retryAuth: () => initializeAuth({ force: true }),
+    retryProfile: async () => {
+      if (!session?.user) return null;
+      const requestId = authRequestRef.current + 1;
+      authRequestRef.current = requestId;
+      setLoading(true);
+      setProfileError(null);
+      try {
+        return await loadProfile(session.user.id, { force: true, requestId });
+      } finally {
+        if (mountedRef.current && requestId === authRequestRef.current) setLoading(false);
+      }
+    },
     signIn: async (email, password) => {
       if (!isSupabaseConfigured || !supabase) return unavailableClientError();
 
       const requestId = authRequestRef.current + 1;
       authRequestRef.current = requestId;
-      authLog('AUTH_INIT', { requestId, event: 'SIGN_IN_SUBMIT' });
       setLoading(true);
       setAuthError(null);
       setProfileError(null);
@@ -184,57 +232,43 @@ export function AuthProvider({ children }) {
         );
 
         if (result.error) {
-          const message = result.error.message || 'Login gagal. Periksa email dan password lalu coba lagi.';
-          setSession(null);
-          setProfile(null);
+          const message = getFriendlySupabaseError(result.error, 'Login gagal. Periksa email dan password lalu coba lagi.');
+          if (!isRateLimitError(result.error)) {
+            sessionUserIdRef.current = null;
+            setSession(null);
+            profileRef.current = null;
+            setProfile(null);
+            loadedProfileUserIdRef.current = null;
+          }
           setAuthError(message);
-          authLog('AUTH_ERROR', { step: 'sign_in', message });
-          return result;
+          return { ...result, error: new Error(message) };
         }
 
         const nextSession = result.data?.session || null;
-        setSession(nextSession);
-        setAuthError(null);
-
-        if (nextSession?.user) {
-          authLog('AUTH_SESSION_FOUND', { source: 'sign_in', userId: nextSession.user.id });
-          const { data, error } = await withTimeout(
-            supabase.from('profiles').select('*').eq('id', nextSession.user.id).maybeSingle(),
-            'AUTH_PROFILE_LOADED'
-          );
-
-          if (error) throw error;
-
-          if (data) {
-            setProfile(data);
-            setProfileError(null);
-            authLog('AUTH_PROFILE_LOADED', { userId: nextSession.user.id, role: data.role });
-          } else {
-            const message = 'Profile akun tidak ditemukan. Hubungi admin untuk membuat profile dan role.';
-            setProfile(null);
-            setProfileError(message);
-            authLog('AUTH_ERROR', { step: 'profile_missing', userId: nextSession.user.id });
-          }
-        }
-
+        await applySession(nextSession, 'sign_in', { requestId, forceProfile: true });
         return result;
       } catch (error) {
-        const message = error.message || 'Login gagal. Silakan coba lagi.';
-        setProfile(null);
+        const message = getFriendlySupabaseError(error, 'Login gagal. Silakan coba lagi.');
+        if (!isRateLimitError(error)) {
+          profileRef.current = null;
+          setProfile(null);
+        }
         setAuthError(message);
-        setProfileError(null);
-        authLog('AUTH_ERROR', { step: 'sign_in', message });
         return { data: null, error: new Error(message) };
       } finally {
-        setLoading(false);
-        authLog('AUTH_DONE', { requestId, event: 'SIGN_IN_SUBMIT' });
+        if (mountedRef.current && requestId === authRequestRef.current) setLoading(false);
       }
     },
     signOut: () => {
       if (!isSupabaseConfigured || !supabase) return unavailableClientError();
+      loadedProfileUserIdRef.current = null;
+      profileRequestUserIdRef.current = null;
+      profileRef.current = null;
+      setProfile(null);
+      sessionUserIdRef.current = null;
       return supabase.auth.signOut();
     }
-  }), [session, profile, loading, authError, profileError]);
+  }), [applySession, authError, initializeAuth, loadProfile, loading, profile, profileError, session, unavailableClientError]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

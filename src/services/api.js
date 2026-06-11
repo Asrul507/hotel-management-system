@@ -1,4 +1,5 @@
 import { requireSupabase } from '../config/supabase';
+import { getFriendlySupabaseError, isRateLimitError } from '../utils/supabaseError';
 import {
   FO_STATUSES,
   HK_STATUSES,
@@ -11,7 +12,7 @@ import {
   isReadyForReservation
 } from '../utils/roomStatus';
 
-export { FO_STATUSES, HK_STATUSES };
+export { FO_STATUSES, HK_STATUSES, getFriendlySupabaseError, isRateLimitError };
 export const ROOM_STATUSES = ['available', 'unavailable', ...HK_STATUSES];
 export const RESERVATION_STATUSES = ['reserved', 'checked_in', 'checked_out', 'cancelled', 'no_show'];
 export const INVOICE_STATUSES = ['unpaid', 'partial', 'paid', 'refunded'];
@@ -40,14 +41,14 @@ export const isOutOfInventoryHk = isOutOfInventoryStatus;
 export const isOccupiedHk = isOccupiedStatus;
 
 function raise(error) {
-  if (error) throw new Error(error.message || 'Terjadi kesalahan saat mengambil data Supabase.');
+  if (error) throw new Error(getFriendlySupabaseError(error));
 }
 
 function parsePgError(error, fallback) {
   if (!error) return fallback;
-  console.warn('Supabase error detail:', error);
   const detail = [error.message, error.details, error.hint].filter(Boolean).join(' ');
   const lowerDetail = detail.toLowerCase();
+  if (isRateLimitError(error)) return getFriendlySupabaseError(error);
   if (error.code === '23505') return 'Data sudah ada. Periksa nomor kamar, kode, NIK, folio, atau nomor reservasi yang harus unique.';
   if (error.code === '23514') return `${fallback} Constraint database gagal. Periksa item_type, status, tanggal, qty, dan unit price. Detail: ${detail || 'check constraint violation.'}`;
   if (error.code === '23502') return `${fallback} Field wajib belum lengkap. Detail: ${detail || 'not-null violation.'}`;
