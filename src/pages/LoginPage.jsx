@@ -37,7 +37,7 @@ export default function LoginPage() {
   if (configError) return <ConfigError message={configError} />;
 
   return <div className="auth"><form onSubmit={submit} className="card"><h1>Hotel Management System</h1>
-    <input placeholder="Email" type="email" required value={form.email} onChange={(e)=>setForm({...form,email:e.target.value})}/>
-    <input placeholder="Password" type="password" required value={form.password} onChange={(e)=>setForm({...form,password:e.target.value})}/>
+    <input placeholder="Email" type="email" autoComplete="email" required value={form.email} onChange={(e)=>setForm({...form,email:e.target.value})}/>
+    <input placeholder="Password" type="password" autoComplete="current-password" required value={form.password} onChange={(e)=>setForm({...form,password:e.target.value})}/>
     {error && <p className="error">{error}</p>}<button disabled={submitting}>{submitting ? 'Memproses...' : 'Login'}</button></form></div>;
 }

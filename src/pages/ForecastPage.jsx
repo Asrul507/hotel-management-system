@@ -37,8 +37,10 @@ export default function ForecastPage() {
     ['Hari', summary.days],
     ['Avg Occupancy', `${summary.average_occupancy_percentage}%`],
     ['Avg Inventory', Math.round((summary.inventory_rooms || 0) / summary.days)],
-    ['Total Arrival', summary.expected_arrival || 0],
-    ['Total Departure', summary.expected_departure || 0],
+    ['Expected Arrival', summary.expected_arrival || 0],
+    ['Expected Departure', summary.expected_departure || 0],
+    ['Actual Arrival', summary.arrival || 0],
+    ['Actual Departure', summary.departure || 0],
     ['OOO + OOS', (summary.ooo_rooms || 0) + (summary.oos_rooms || 0)]
   ] : [], [summary]);
 
@@ -53,7 +55,7 @@ export default function ForecastPage() {
     {summary && <div className="grid">{cards.map(([label, value]) => <div className="card" key={label}><h3>{label}</h3><p>{value}</p></div>)}</div>}
     <div className="card table-card">
       <h2>Forecast per Tanggal</h2>
-      {loading ? <p>Memuat forecast...</p> : rows.length === 0 ? <p className="muted">Data forecast tidak ditemukan.</p> : <table><thead><tr><th>Date</th><th>Total Rooms</th><th>Inventory Rooms</th><th>OOO</th><th>OOS</th><th>Occupied</th><th>Expected Arrival</th><th>Expected Departure</th><th>Room Available</th><th>Occ %</th><th>Warning</th></tr></thead><tbody>{rows.map((row) => <tr key={row.date}><td>{row.date}</td><td>{row.total_rooms}</td><td>{row.inventory_rooms}</td><td>{row.ooo_rooms}</td><td>{row.oos_rooms}</td><td>{row.occupied_rooms}</td><td>{row.expected_arrival}</td><td>{row.expected_departure}</td><td className={row.available_rooms < 0 ? 'negative' : ''}>{row.available_rooms}</td><td>{row.occupancy_percentage}%</td><td>{row.warning || '-'}</td></tr>)}</tbody></table>}
+      {loading ? <p>Memuat forecast...</p> : rows.length === 0 ? <p className="muted">Data forecast tidak ditemukan.</p> : <table><thead><tr><th>Date</th><th>Total Rooms</th><th>Inventory Rooms</th><th>OOO</th><th>OOS</th><th>Occupied</th><th>Expected Arrival</th><th>Expected Departure</th><th>Arrival</th><th>Departure</th><th>Room Available</th><th>Occ %</th><th>Warning</th></tr></thead><tbody>{rows.map((row) => <tr key={row.date}><td>{row.date}</td><td>{row.total_rooms}</td><td>{row.inventory_rooms}</td><td>{row.ooo_rooms}</td><td>{row.oos_rooms}</td><td>{row.occupied_rooms}</td><td>{row.expected_arrival}</td><td>{row.expected_departure}</td><td>{row.arrival || 0}</td><td>{row.departure || 0}</td><td className={row.available_rooms < 0 ? 'negative' : ''}>{row.available_rooms}</td><td>{row.occupancy_percentage}%</td><td>{row.warning || '-'}</td></tr>)}</tbody></table>}
     </div>
   </div>;
 }
