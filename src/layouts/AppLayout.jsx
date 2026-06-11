@@ -8,8 +8,7 @@ const menus = [
   ['/master-settings', 'Master Settings', 'masterSettings'],
   ['/guests', 'Guests', 'guests'],
   ['/forecast', 'Forecast', 'forecast'],
-  ['/reservations', 'Reservations', 'reservations'],
-  ['/checkin', 'Check-in/out', 'checkInOut'],
+  ['/front-office', 'Front Office', 'frontOffice'],
   ['/billing', 'Billing / Folio', 'billing'],
   ['/housekeeping', 'Housekeeping', 'housekeeping'],
   ['/maintenance', 'Maintenance', 'maintenance'],
@@ -32,7 +31,7 @@ export default function AppLayout() {
           <span>{APP_BUILD_LABEL}</span>
         </div>
         <small>{profile?.full_name} ({profile?.role})</small>
-        {visibleMenus.map(([to, label]) => <Link key={to} className={location.pathname === to ? 'active' : ''} to={to}>{label}</Link>)}
+        {visibleMenus.map(([to, label]) => <Link key={to} className={(location.pathname === to || (to === '/front-office' && ['/reservations', '/checkin'].includes(location.pathname))) ? 'active' : ''} to={to}>{label}</Link>)}
         <button onClick={signOut}>Logout</button>
       </aside>
       <main className="content"><Outlet /></main>

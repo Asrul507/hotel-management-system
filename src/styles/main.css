@@ -89,3 +89,7 @@ button.small { width: auto; padding: .45rem .7rem; margin: 0; white-space: nowra
 .compact-actions { flex-wrap: nowrap; }
 .compact-actions button { flex: 0 0 auto; }
 @media (max-width: 768px){ .action-toolbar{flex-wrap:nowrap; padding-bottom:.25rem}.compact-actions{flex-wrap:wrap} }
+.billing-layout { display: flex; flex-direction: column; gap: 1rem; }
+.dashboard-lists { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+@media (max-width: 1024px){ .dashboard-lists{grid-template-columns:1fr} }
+@media (max-width: 768px){ .billing-layout .inline-form{min-width:0}.billing-layout select,.billing-layout input,.billing-layout textarea{max-width:100%} }
