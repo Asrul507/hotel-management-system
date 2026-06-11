@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { profilesApi } from '../services/api';
 import { ROLES } from '../utils/roles';
+import IconButton from '../components/IconButton';
+import { faFilter, faPenToSquare } from '@fortawesome/free-solid-svg-icons';
 
 const roleOptions = Object.values(ROLES);
 const blankForm = { id: '', email: '', full_name: '', phone: '', role: ROLES.RECEPTIONIST, is_active: true };
@@ -80,8 +82,8 @@ export default function UserManagementPage() {
         <div className="button-row full"><button disabled={saving}>{editing ? 'Simpan Perubahan' : 'Tambah Profile'}</button>{editing && <button type="button" className="secondary" onClick={resetForm}>Batal Edit</button>}</div>
       </form>
       <div className="card table-card">
-        <div className="page-header"><div><h2>Profiles</h2></div><form className="filter-grid compact" onSubmit={(e) => { e.preventDefault(); load(); }}><input placeholder="Cari email/nama/phone" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} /><select value={filters.role} onChange={(e) => setFilters({ ...filters, role: e.target.value })}><option value="all">Semua role</option>{roleOptions.map((role) => <option key={role} value={role}>{role}</option>)}</select><select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}><option value="all">Semua status</option><option value="active">Aktif</option><option value="inactive">Nonaktif</option></select><button className="small">Filter</button></form></div>
-        {loading ? <p>Memuat profiles...</p> : profiles.length === 0 ? <p className="muted">Profile tidak ditemukan.</p> : <table><thead><tr><th>Email</th><th>Nama</th><th>Phone</th><th>Role</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{profiles.map((item) => <tr key={item.id}><td>{item.email || '-'}<br /><small>{item.id}</small></td><td>{item.full_name || '-'}</td><td>{item.phone || '-'}</td><td><span className="badge">{item.role}</span></td><td><span className={`badge ${item.is_active === false ? 'cancelled' : 'available'}`}>{item.is_active === false ? 'inactive' : 'active'}</span></td><td><button className="small" onClick={() => startEdit(item)}>Edit</button></td></tr>)}</tbody></table>}
+        <div className="page-header"><div><h2>Profiles</h2></div><form className="filter-grid compact" onSubmit={(e) => { e.preventDefault(); load(); }}><input placeholder="Cari email/nama/phone" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} /><select value={filters.role} onChange={(e) => setFilters({ ...filters, role: e.target.value })}><option value="all">Semua role</option>{roleOptions.map((role) => <option key={role} value={role}>{role}</option>)}</select><select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}><option value="all">Semua status</option><option value="active">Aktif</option><option value="inactive">Nonaktif</option></select><IconButton icon={faFilter} label="Filter" title="Filter" type="submit" variant="primary" /></form></div>
+        {loading ? <p>Memuat profiles...</p> : profiles.length === 0 ? <p className="muted">Profile tidak ditemukan.</p> : <table><thead><tr><th>Email</th><th>Nama</th><th>Phone</th><th>Role</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{profiles.map((item) => <tr key={item.id}><td>{item.email || '-'}<br /><small>{item.id}</small></td><td>{item.full_name || '-'}</td><td>{item.phone || '-'}</td><td><span className="badge">{item.role}</span></td><td><span className={`badge ${item.is_active === false ? 'cancelled' : 'available'}`}>{item.is_active === false ? 'inactive' : 'active'}</span></td><td><div className="table-actions"><IconButton icon={faFilter, faPenToSquare} title="Edit" onClick={() => startEdit(item)} /></div></td></tr>)}</tbody></table>}
       </div>
     </div>
   </div>;

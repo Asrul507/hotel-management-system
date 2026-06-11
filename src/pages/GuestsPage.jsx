@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { guestsApi } from '../services/api';
+import IconButton from '../components/IconButton';
+import { faFilter, faPenToSquare, faTrash } from '@fortawesome/free-solid-svg-icons';
 
 const emptyForm = { full_name: '', nik: '', phone: '', email: '', address: '', city: '', birth_date: '', gender: '', notes: '', is_blacklisted: false, is_active: true };
 
@@ -96,8 +98,8 @@ export default function GuestsPage() {
         {editingId && <button type="button" className="secondary" onClick={() => { setEditingId(''); setForm(emptyForm); }}>Batal Edit</button>}
       </form>
       <div className="card table-card">
-        <div className="page-header"><div><h2>Daftar Tamu</h2></div><form className="inline-form guest-filter" onSubmit={(e) => { e.preventDefault(); load(); }}><input placeholder="Cari nama / NIK / HP" value={search} onChange={(e) => setSearch(e.target.value)} /><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="active">Active</option><option value="archived">Archived</option><option value="all">Semua</option></select><button className="small">Cari</button></form></div>
-        {loading ? <p>Memuat tamu...</p> : guests.length === 0 ? <p className="muted">Data tamu tidak ditemukan.</p> : <table><thead><tr><th>Nama</th><th>NIK</th><th>No HP</th><th>Email</th><th>Kota</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{guests.map((guest) => <tr key={guest.id}><td>{guest.full_name} {guest.is_blacklisted && <span className="badge cancelled">Blacklist</span>}</td><td>{guest.nik || '-'}</td><td>{guest.phone || '-'}</td><td>{guest.email || '-'}</td><td>{guest.city || '-'}</td><td>{guest.is_active === false ? 'archived' : 'active'}</td><td className="button-row"><button className="small" onClick={() => edit(guest)}>Edit</button>{guest.is_active !== false && <button className="small secondary" disabled={saving === guest.id} onClick={() => archive(guest)}>Arsip</button>}</td></tr>)}</tbody></table>}
+        <div className="page-header"><div><h2>Daftar Tamu</h2></div><form className="inline-form guest-filter" onSubmit={(e) => { e.preventDefault(); load(); }}><input placeholder="Cari nama / NIK / HP" value={search} onChange={(e) => setSearch(e.target.value)} /><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="active">Active</option><option value="archived">Archived</option><option value="all">Semua</option></select><IconButton icon={faFilter} label="Cari" title="Cari" type="submit" variant="primary" /></form></div>
+        {loading ? <p>Memuat tamu...</p> : guests.length === 0 ? <p className="muted">Data tamu tidak ditemukan.</p> : <table><thead><tr><th>Nama</th><th>NIK</th><th>No HP</th><th>Email</th><th>Kota</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{guests.map((guest) => <tr key={guest.id}><td>{guest.full_name} {guest.is_blacklisted && <span className="badge cancelled">Blacklist</span>}</td><td>{guest.nik || '-'}</td><td>{guest.phone || '-'}</td><td>{guest.email || '-'}</td><td>{guest.city || '-'}</td><td>{guest.is_active === false ? 'archived' : 'active'}</td><td><div className="table-actions"><IconButton icon={faPenToSquare} title="Edit" onClick={() => edit(guest)} />{guest.is_active !== false && <IconButton icon={faTrash} title="Arsip" variant="danger" disabled={saving === guest.id} onClick={() => archive(guest)} />}</div></td></tr>)}</tbody></table>}
       </div>
     </div>
   </div>;

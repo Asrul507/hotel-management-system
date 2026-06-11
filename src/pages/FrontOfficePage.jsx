@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { foliosApi, nightsBetween, reservationsApi, roomsApi, staysApi, today } from '../services/api';
 import { getBillingStatus, getBillingStatusLabel } from '../utils/billingStatus';
+import IconButton from '../components/IconButton';
+import { faClipboardList, faFilter, faRightFromBracket, faRightToBracket } from '@fortawesome/free-solid-svg-icons';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 
 const money = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 });
 const views = [
@@ -109,13 +112,13 @@ export default function FrontOfficePage() {
     {error && <div className="alert error">{error}</div>}
     {success && <div className="alert success">{success}</div>}
     <div className="card action-toolbar" role="toolbar" aria-label="Front Office tabs">
-      {views.map(([value, label]) => <button key={value} type="button" className={`action-pill ${activeView === value ? 'active' : ''}`} onClick={() => setActiveView(value)}>{label}</button>)}
+      {views.map(([value, label]) => <button key={value} type="button" className={`action-pill ${activeView === value ? 'active' : ''}`} onClick={() => setActiveView(value)}><FontAwesomeIcon icon={faClipboardList} aria-hidden="true" />{label}</button>)}
     </div>
     <form className="card filter-grid" onSubmit={(e) => { e.preventDefault(); load(); }}>
       <input placeholder="Cari guest / kode / kamar" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} />
       <input type="date" value={filters.startDate} onChange={(e) => setFilters({ ...filters, startDate: e.target.value })} />
       <input type="date" value={filters.endDate} onChange={(e) => setFilters({ ...filters, endDate: e.target.value })} />
-      <button>Filter</button>
+      <IconButton icon={faFilter} label="Filter" title="Filter" type="submit" variant="primary" />
     </form>
     <div className="card table-card">
       <div className="page-header"><div><h2>{views.find(([value]) => value === activeView)?.[1]}</h2><p className="muted">Tanggal default hari ini. Room picker hanya menampilkan kamar VR yang ready.</p></div></div>
@@ -128,13 +131,13 @@ function ReservationTable({ rows, activeView, folioNumber, formatDateTime, roomC
   return <table><thead><tr><th>Kode</th><th>Folio</th><th>Tamu</th><th>Kamar</th><th>Check-in</th><th>Check-out</th><th>Actual In</th><th>Actual Out</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{rows.map((reservation) => {
     const choices = roomChoices[reservation.id] || [];
     const needsRoom = activeView === 'expected_arrival' && reservation.status === 'reserved' && !reservation.room_id;
-    return <tr key={`${reservation.id}-${reservation.stay_id || ''}`}><td>{reservation.reservation_code || '-'}</td><td>{folioNumber(reservation)}</td><td>{reservation.guests?.full_name || '-'}</td><td>{reservation.rooms?.room_number || 'Unassigned'}<br /><small>{reservation.room_types?.name || reservation.rooms?.room_types?.name || '-'}</small>{needsRoom && <><select value={selectedRooms[reservation.id] || ''} onChange={(e) => setSelectedRooms((current) => ({ ...current, [reservation.id]: e.target.value }))}><option value="">Pilih kamar VR</option>{choices.map((room) => <option key={room.id} value={room.id}>{room.room_number} - {room.hk_status}</option>)}</select>{choices.length === 0 && <small>Tidak ada kamar VR yang ready untuk tanggal ini.</small>}</>}</td><td>{reservation.check_in_date || '-'}</td><td>{reservation.check_out_date || '-'}<br /><small>{reservation.check_in_date && reservation.check_out_date ? `${reservation.nights || nightsBetween(reservation.check_in_date, reservation.check_out_date)} malam` : ''}</small></td><td>{formatDateTime(reservation.actual_check_in)}</td><td>{formatDateTime(reservation.actual_check_out)}</td><td><span className={`badge ${reservation.status}`}>{reservation.status}</span></td><td>{activeView === 'expected_arrival' && reservation.status === 'reserved' && <button className="small" disabled={saving === `checkin-${reservation.id}` || (needsRoom && !selectedRooms[reservation.id])} onClick={() => onCheckIn(reservation)}>Check In</button>}</td></tr>;
+    return <tr key={`${reservation.id}-${reservation.stay_id || ''}`}><td>{reservation.reservation_code || '-'}</td><td>{folioNumber(reservation)}</td><td>{reservation.guests?.full_name || '-'}</td><td>{reservation.rooms?.room_number || 'Unassigned'}<br /><small>{reservation.room_types?.name || reservation.rooms?.room_types?.name || '-'}</small>{needsRoom && <><select value={selectedRooms[reservation.id] || ''} onChange={(e) => setSelectedRooms((current) => ({ ...current, [reservation.id]: e.target.value }))}><option value="">Pilih kamar VR</option>{choices.map((room) => <option key={room.id} value={room.id}>{room.room_number} - {room.hk_status}</option>)}</select>{choices.length === 0 && <small>Tidak ada kamar VR yang ready untuk tanggal ini.</small>}</>}</td><td>{reservation.check_in_date || '-'}</td><td>{reservation.check_out_date || '-'}<br /><small>{reservation.check_in_date && reservation.check_out_date ? `${reservation.nights || nightsBetween(reservation.check_in_date, reservation.check_out_date)} malam` : ''}</small></td><td>{formatDateTime(reservation.actual_check_in)}</td><td>{formatDateTime(reservation.actual_check_out)}</td><td><span className={`badge ${reservation.status}`}>{reservation.status}</span></td><td>{activeView === 'expected_arrival' && reservation.status === 'reserved' && <IconButton icon={faRightToBracket} title="Check In" disabled={saving === `checkin-${reservation.id}` || (needsRoom && !selectedRooms[reservation.id])} variant="primary" onClick={() => onCheckIn(reservation)} />}</td></tr>;
   })}</tbody></table>;
 }
 
 function InHouseTable({ rows, folioNumber, billingStatus, saving, onCheckOut }) {
   return <table><thead><tr><th>Guest</th><th>Room</th><th>Folio</th><th>Check-in</th><th>Expected Check-out</th><th>Nights</th><th>Billing</th><th>Balance Due</th><th>Aksi</th></tr></thead><tbody>{rows.map((stay) => {
     const status = billingStatus(stay);
-    return <tr key={stay.id}><td>{stay.guests?.full_name || stay.reservations?.guests?.full_name || '-'}</td><td>{stay.rooms?.room_number || '-'}</td><td>{folioNumber(stay)}</td><td>{String(stay.actual_check_in || stay.checkin_at || '').slice(0, 10) || '-'}</td><td>{stay.reservations?.check_out_date || '-'}</td><td>{stay.reservations?.check_in_date && stay.reservations?.check_out_date ? nightsBetween(stay.reservations.check_in_date, stay.reservations.check_out_date) : '-'}</td><td><span className={`badge ${status}`}>{getBillingStatusLabel(stay.folios || {})}</span></td><td>{money.format(stay.folios?.balance_due || 0)}</td><td><button className="small" disabled={saving === `checkout-${stay.id}`} onClick={() => onCheckOut(stay)}>Check Out</button></td></tr>;
+    return <tr key={stay.id}><td>{stay.guests?.full_name || stay.reservations?.guests?.full_name || '-'}</td><td>{stay.rooms?.room_number || '-'}</td><td>{folioNumber(stay)}</td><td>{String(stay.actual_check_in || stay.checkin_at || '').slice(0, 10) || '-'}</td><td>{stay.reservations?.check_out_date || '-'}</td><td>{stay.reservations?.check_in_date && stay.reservations?.check_out_date ? nightsBetween(stay.reservations.check_in_date, stay.reservations.check_out_date) : '-'}</td><td><span className={`badge ${status}`}>{getBillingStatusLabel(stay.folios || {})}</span></td><td>{money.format(stay.folios?.balance_due || 0)}</td><td><IconButton icon={faRightFromBracket} title="Check Out" disabled={saving === `checkout-${stay.id}`} variant="primary" onClick={() => onCheckOut(stay)} /></td></tr>;
   })}</tbody></table>;
 }
