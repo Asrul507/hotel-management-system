@@ -81,3 +81,11 @@ button.small { width: auto; padding: .45rem .7rem; margin: 0; white-space: nowra
 @media (max-width: 1024px){ .wide-left{grid-template-columns:1fr}.filter-grid.compact{grid-template-columns:repeat(2,minmax(140px,1fr));min-width:0}.action-bar{align-items:stretch}.action-bar>*,.action-card .small{max-width:100%} }
 @media (max-width: 768px){ body{overflow-x:hidden}.sidebar{display:flex;flex-direction:row;align-items:center;gap:.5rem}.sidebar h2,.sidebar small,.app-version{flex:0 0 auto}.sidebar a{flex:0 0 auto}.sidebar button{margin-top:0;flex:0 0 auto}.content{max-width:100vw}.card{padding:.85rem}.grid{grid-template-columns:1fr}.filter-grid,.filter-grid.compact{grid-template-columns:1fr;min-width:0}.button-row,.action-group,.table-actions{gap:.35rem}.icon-button{white-space:normal}.table-card{max-width:100%;overflow-x:auto}table{min-width:640px}.page-header .button-link{width:100%} }
 @media (max-width: 480px){ .content{padding:.75rem}.card{border-radius:10px}.form-grid,.inline-form{grid-template-columns:1fr;min-width:0}.button-row>button,.button-row>.button-link,.action-group>button,.action-bar>button{width:100%}.table-actions{min-width:120px}.table-actions .icon-button{width:auto}.sidebar{padding:.75rem}.app-version span{display:none} }
+.action-toolbar { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; overflow-x: auto; }
+.action-toolbar > * { flex: 0 0 auto; }
+.action-pill { width: auto; display: inline-flex; align-items: center; gap: .35rem; padding: .55rem .85rem; margin: 0; border-radius: 999px; background: #334155; border-color: #475569; color: #dbeafe; white-space: nowrap; }
+.action-pill.active, .action-pill:hover:not(:disabled) { background: #2563eb; border-color: #60a5fa; color: #fff; }
+.icon-action { display: inline-flex; align-items: center; justify-content: center; min-width: 1.25rem; }
+.compact-actions { flex-wrap: nowrap; }
+.compact-actions button { flex: 0 0 auto; }
+@media (max-width: 768px){ .action-toolbar{flex-wrap:nowrap; padding-bottom:.25rem}.compact-actions{flex-wrap:wrap} }

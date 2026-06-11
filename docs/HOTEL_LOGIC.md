@@ -147,3 +147,47 @@ Kamar yang muncul di picker reservasi harus memenuhi semua syarat berikut:
   - `partial` jika sudah ada pembayaran tetapi masih ada balance.
   - `unpaid` jika belum ada pembayaran.
   - `debt` jika folio ditutup sebagai debt.
+
+## Advanced Operations: Housekeeping Bulk Update
+
+Housekeeping now supports selecting multiple rooms from the filtered result and applying one HK status in a single action.
+
+Rules enforced by UI and service:
+- `housekeeping`, `manager`, and `super_admin` may run housekeeping updates.
+- `housekeeping` can only move within the same HK group:
+  - vacant: `VR`, `VD`, `VC`
+  - occupied: `OR`, `OD`, `OC`
+- `OOO`/`OOS` can only be set by `manager` or `super_admin` and require notes.
+- `OOO`/`OOS` automatically set FO status to `unavailable`.
+- Returning from `OOO`/`OOS` to `VR`/`VD`/`VC` is limited to `manager` or `super_admin`.
+- Housekeeping users cannot edit rooms whose FO status is `unavailable`.
+- Bulk updates use a partial-success approach so one failed room does not hide successful updates.
+
+## Advanced Operations: Room Move Flow
+
+Room move is available from Check-in/out for in-house guests and is limited to `receptionist`, `manager`, and `super_admin`.
+
+Flow:
+1. Open Check-in/out and find the in-house guest.
+2. Click the room-move action.
+3. Select a ready room (`is_active`, FO `available`, HK `VR`/`VC`, not `OOO`/`OOS`, not occupied, and not date-conflicted).
+4. Enter a required reason.
+5. Confirm the move.
+
+System effects:
+- Updates `stays.room_id` to the new room.
+- Updates linked `reservations.room_id` when available.
+- Marks the old room `VD`.
+- Marks the new room `OC`.
+- Inserts `room_move_logs` when the table/policy is available.
+- Writes an audit-log event when audit logging is available.
+
+## Forecast Arrival/Departure Logic
+
+Forecast keeps the existing room inventory metrics and adds movement metrics:
+- Expected Arrival: reservations with `status = reserved` and `check_in_date` on the forecast date.
+- Expected Departure: reservations/stays expected to leave on `check_out_date` and not already fully excluded from active logic.
+- Arrival: stays with actual `actual_check_in`/`checkin_at` on the forecast date.
+- Departure: stays with actual `actual_check_out`/`checkout_at` on the forecast date.
+
+If stay data is empty or unavailable, movement values display as `0` instead of blocking the forecast table.
