@@ -90,3 +90,18 @@ Aplikasi sudah memiliki auth, routing, Supabase client yang aman berbasis enviro
 - Test folio: tambah charge, discount persen, payment cash, payment non tunai dengan reference, refund, close sebagai debt.
 - Test housekeeping bulk update VD ke VC.
 - Jalankan `npm run build` dan pastikan berhasil.
+
+## Follow-up Audit v0.3.0-folio
+
+- Penyebab error reservasi `cannot insert a non-DEFAULT value into column nights`: service reservation sebelumnya mengirim `nights` pada insert/update, sementara beberapa schema Supabase memakai `reservations.nights` sebagai generated column. Payload sekarang disanitasi agar `nights` tidak pernah dikirim ke DB.
+- Penyebab kamar ready tidak muncul: filter room picker belum terpusat pada definisi ready operasional hotel. Sekarang room picker memakai helper status kamar dan hanya menampilkan kamar active, FO available, HK `VR`/`VC`, tanpa overlap reservation/stay.
+- Logika FO/HK dipusatkan di `src/utils/roomStatus.js` agar Housekeeping, Master Settings, API room update, reservation picker, dan check-in/check-out memakai aturan yang sama.
+- Billing/Folio diperjelas menjadi Folio Workspace dengan tab Summary, Reservations, Charges, Payments, dan Refund/Debt.
+- SQL idempotent ditambahkan untuk `reservations.folio_id`, index folio/reservation/room lookup, RLS folio/audit, dan item type additional charge.
+
+## Follow-up Audit Add Charge / Folio Items
+
+- Penyebab paling mungkin Add Charge gagal adalah mismatch `item_type` UI dan database constraint lama. UI sebelumnya mengirim tipe tambahan seperti `extra_bed`, sementara constraint DB lama hanya menerima sebagian tipe folio item jika migration terbaru belum dijalankan.
+- Add Charge sekarang memakai payload sanitizer/validator khusus folio item dan tidak pernah mengirim `line_total`, karena `line_total` adalah generated column.
+- Error Supabase sekarang dicatat ke console untuk developer dan pesan UI dibedakan untuk constraint `23514`, RLS `42501`, not-null `23502`, serta generated column.
+- Edit dan Hapus transaksi folio item sekarang hanya tersedia untuk `super_admin`; hapus memakai soft void agar audit hotel tetap aman.

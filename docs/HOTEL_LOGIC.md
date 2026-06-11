@@ -103,3 +103,37 @@ Forecast memakai reservations/stays untuk occupancy dan rooms FO/HK untuk invent
 - OOO/OOS tidak masuk inventory.
 - Maintenance/unavailable tidak muncul sebagai room ready.
 - Available negatif diberi warning karena mengindikasikan data bentrok atau oversell.
+
+## Update v0.3.0-folio: Reservation, Room Status, dan Folio
+
+### Nights reservasi
+
+- `nights` tetap menjadi input utama di UI.
+- UI menghitung `check_out_date` dari `check_in_date + nights`.
+- Jika user mengubah `check_out_date` manual, UI menghitung ulang nilai nights.
+- Service reservations tidak mengirim field `nights` ke Supabase karena kolom ini dapat berupa generated column.
+- Database menyimpan tanggal check-in/check-out; nights dianggap derived/generated.
+
+### Room picker reservasi
+
+Kamar yang muncul di picker reservasi harus memenuhi semua syarat berikut:
+
+- `rooms.is_active = true`
+- `rooms.fo_status = available`
+- `rooms.hk_status in ('VR','VC')`
+- bukan `OOO`/`OOS`
+- bukan occupied (`OR`,`OC`,`OD`)
+- tidak overlap dengan reservation lain status `reserved`/`checked_in`
+- tidak punya stay aktif status `checked_in`
+- jika room type dipilih, `room.room_type_id` harus sama
+
+### FO/HK status
+
+- FO status hanya `available` atau `unavailable`.
+- Vacant HK group: `VR`, `VD`, `VC`, `OOO`.
+- Occupied HK group: `OR`, `OD`, `OC`, `OOO`.
+- `OOS` diperlakukan sebagai out of inventory/maintenance dan tidak muncul di reservasi.
+- Housekeeping hanya bisa update HK dalam group yang sama dan tidak bisa set `OOO`/`OOS` secara default.
+- Manager/super admin bisa set `OOO`/`OOS` dan mengembalikan kamar ke status vacant.
+- Check-in adalah proses yang mengubah vacant ke occupied (`OC`).
+- Check-out adalah proses yang mengubah occupied ke vacant dirty (`VD`).
