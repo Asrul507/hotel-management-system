@@ -1,15 +1,16 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { canAccess } from '../utils/roles';
+import { APP_BUILD_LABEL, APP_VERSION } from '../config/appVersion';
 
 const menus = [
   ['/', 'Dashboard', 'dashboard'],
-  ['/master-settings', 'Master Setting', 'masterSettings'],
-  ['/guests', 'Tamu', 'guests'],
+  ['/master-settings', 'Master Settings', 'masterSettings'],
+  ['/guests', 'Guests', 'guests'],
   ['/forecast', 'Forecast', 'forecast'],
-  ['/reservations', 'Reservasi', 'reservations'],
+  ['/reservations', 'Reservations', 'reservations'],
   ['/checkin', 'Check-in/out', 'checkInOut'],
-  ['/billing', 'Billing', 'billing'],
+  ['/billing', 'Billing / Folio', 'billing'],
   ['/housekeeping', 'Housekeeping', 'housekeeping'],
   ['/maintenance', 'Maintenance', 'maintenance'],
   ['/reports', 'Reports', 'reports'],
@@ -25,6 +26,10 @@ export default function AppLayout() {
     <div className="shell">
       <aside className="sidebar">
         <h2>Hotel MS</h2>
+        <div className="app-version" title={APP_BUILD_LABEL}>
+          <strong>Hotel MS v{APP_VERSION}</strong>
+          <span>{APP_BUILD_LABEL}</span>
+        </div>
         <small>{profile?.full_name} ({profile?.role})</small>
         {visibleMenus.map(([to, label]) => <Link key={to} className={location.pathname === to ? 'active' : ''} to={to}>{label}</Link>)}
         <button onClick={signOut}>Logout</button>

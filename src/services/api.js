@@ -735,51 +735,6 @@ export const foliosApi = {
   }
 };
 
-async function upsertInvoiceForStay(stay, forceStatus = false) {
-  const normalizedStay = normalizeStay(stay);
-  const existing = normalizedStay.invoices?.[0];
-  const hotel = await hotelSettingsApi.get().catch(() => ({}));
-  const billing = calculateStayBilling(normalizedStay, hotel);
-  if (existing) {
-    const { data, error } = await requireSupabase().from('invoices').update({
-      subtotal: billing.subtotal,
-      tax_amount: billing.taxAmount,
-      service_amount: billing.serviceAmount,
-      deposit_applied: billing.depositApplied,
-      total_amount: billing.total,
-      balance_due: billing.balance,
-      status: forceStatus ? billing.paymentStatus : existing.status,
-      updated_at: new Date().toISOString()
-    }).eq('id', existing.id).select(invoiceSelect).single();
-    raise(error);
-    return data;
-  }
-
-  const { data: invoice, error } = await requireSupabase().from('invoices').insert({
-    stay_id: normalizedStay.id,
-    invoice_number: invoiceNumber(hotel.invoice_prefix),
-    subtotal: billing.subtotal,
-    tax_amount: billing.taxAmount,
-    service_amount: billing.serviceAmount,
-    deposit_applied: billing.depositApplied,
-    total_amount: billing.total,
-    balance_due: billing.balance,
-    status: billing.paymentStatus
-  }).select(invoiceSelect).single();
-  raise(error);
-
-  const { error: itemError } = await requireSupabase().from('invoice_items').insert({
-    invoice_id: invoice.id,
-    item_type: 'room_charge',
-    description: `Room charge ${billing.nights} malam`,
-    qty: billing.nights,
-    unit_price: billing.roomRate
-  });
-  if (itemError) console.warn('Invoice item gagal dibuat, invoice tetap tersimpan:', itemError.message);
-  await logAuditEvent('create_invoice', 'invoices', invoice.id, { stay_id: normalizedStay.id });
-  return invoice;
-}
-
 export const staysApi = {
   async list() {
     const { data, error } = await requireSupabase().from('stays').select(staySelect).order('created_at', { ascending: false });
