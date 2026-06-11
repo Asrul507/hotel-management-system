@@ -648,3 +648,27 @@ drop policy if exists "authenticated read folio payments" on folio_payments;
 create policy "authenticated read folio payments" on folio_payments for select to authenticated using (true);
 drop policy if exists "authenticated manage folio payments" on folio_payments;
 create policy "authenticated manage folio payments" on folio_payments for all to authenticated using (true) with check (true);
+
+-- Folio item hardening: valid charge types, void audit columns, numeric checks (safe/idempotent).
+alter table folio_items add column if not exists is_void boolean not null default false;
+alter table folio_items add column if not exists void_reason text;
+alter table folio_items add column if not exists voided_by uuid references profiles(id);
+alter table folio_items add column if not exists voided_at timestamptz;
+
+alter table folio_items drop constraint if exists folio_items_type_check;
+alter table folio_items add constraint folio_items_type_check check (item_type in ('room','extra_bed','breakfast','early_checkin','late_checkout','laundry','restaurant','minibar','other','discount','cancellation_fee','no_show_fee','refund','adjustment')) not valid;
+alter table folio_items drop constraint if exists folio_items_qty_positive_check;
+alter table folio_items add constraint folio_items_qty_positive_check check (qty > 0) not valid;
+alter table folio_items drop constraint if exists folio_items_unit_price_non_negative_check;
+alter table folio_items add constraint folio_items_unit_price_non_negative_check check (unit_price >= 0) not valid;
+alter table folio_items drop constraint if exists folio_items_description_required_check;
+alter table folio_items add constraint folio_items_description_required_check check (description is not null and length(trim(description)) > 0) not valid;
+alter table folio_items drop constraint if exists folio_items_posting_date_required_check;
+alter table folio_items add constraint folio_items_posting_date_required_check check (posting_date is not null) not valid;
+
+create index if not exists folio_items_active_folio_id_idx on folio_items(folio_id) where is_void = false;
+
+drop policy if exists "authenticated read folio items" on folio_items;
+create policy "authenticated read folio items" on folio_items for select to authenticated using (true);
+drop policy if exists "authenticated manage folio items" on folio_items;
+create policy "authenticated manage folio items" on folio_items for all to authenticated using (true) with check (true);

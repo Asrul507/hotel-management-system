@@ -64,8 +64,8 @@ Additional charge ditambahkan dari tab **Charges** dan dapat ditambah walaupun b
 
 - Extra Bed (`extra_bed`)
 - Breakfast (`breakfast`)
-- Early Check In (`early_check_in`)
-- Late Check Out (`late_check_out`)
+- Early Check In (`early_checkin`)
+- Late Check Out (`late_checkout`)
 - Laundry (`laundry`)
 - Restaurant (`restaurant`)
 - Minibar (`minibar`)
@@ -116,3 +116,56 @@ Jalankan `supabase/schema.sql` terbaru di Supabase SQL Editor. Migration bersifa
 ## Catatan nights
 
 `reservations.nights` diperlakukan sebagai derived/generated value. Frontend tetap menyediakan input nights sebagai helper UI, tetapi payload insert/update tidak mengirim `nights` ke Supabase. Ini menghindari error PostgreSQL: `cannot insert a non-DEFAULT value into column nights`.
+
+## Update Add Charge dan Void Transaksi
+
+Add Charge di Folio/Billing sekarang mengirim payload aman ke `folio_items`:
+
+- Tidak mengirim `id`.
+- Tidak mengirim `line_total` karena `line_total` adalah generated column (`qty * unit_price`).
+- `folio_id` wajib ada dari folio yang sedang dipilih.
+- `item_type` wajib salah satu tipe yang valid.
+- `description` wajib diisi.
+- `qty` dikonversi ke number dan harus `> 0`.
+- `unit_price` dikonversi ke number dan harus `>= 0`.
+- `posting_date` default hari ini jika kosong dan harus format `YYYY-MM-DD`.
+
+Default additional charge types yang dikirim UI:
+
+- `extra_bed` = Extra Bed
+- `breakfast` = Breakfast
+- `early_checkin` = Early Check In
+- `late_checkout` = Late Check Out
+- `laundry` = Laundry
+- `restaurant` = Restaurant
+- `minibar` = Minibar
+- `other` = Other
+
+Jika Add Charge masih gagal dengan constraint `item_type`, jalankan ulang `supabase/schema.sql` terbaru agar constraint `folio_items_type_check` menerima daftar item baru.
+
+### Edit dan Hapus/Void Folio Item
+
+Edit dan hapus transaksi hanya boleh untuk `super_admin`.
+
+- Tombol **Edit** dan **Hapus/Void** hanya tampil untuk `profile.role === 'super_admin'`.
+- Service juga menolak role selain `super_admin`, jadi permission tidak hanya disembunyikan di UI.
+- Edit hanya mengubah `item_type`, `description`, `qty`, `unit_price`, dan `posting_date`.
+- Edit tidak mengubah `id`, `folio_id`, `line_total`, atau `created_at`.
+- Hapus memakai soft delete/void, bukan hard delete:
+  - `is_void = true`
+  - `void_reason`
+  - `voided_by`
+  - `voided_at`
+- Item void tetap terlihat dengan badge `VOID` untuk audit hotel.
+- Recalculate folio totals mengabaikan `folio_items.is_void = true`.
+
+### SQL untuk void item
+
+Jalankan `supabase/schema.sql` terbaru. Migration tambahan bersifat idempotent dan menambahkan:
+
+```sql
+alter table folio_items add column if not exists is_void boolean not null default false;
+alter table folio_items add column if not exists void_reason text;
+alter table folio_items add column if not exists voided_by uuid references profiles(id);
+alter table folio_items add column if not exists voided_at timestamptz;
+```

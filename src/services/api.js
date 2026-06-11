@@ -19,12 +19,12 @@ export const PAYMENT_GROUPS = ['cash', 'non_tunai'];
 export const NON_CASH_METHODS = ['qris', 'transfer', 'debit_card', 'credit_card', 'e_wallet', 'other'];
 export const PAYMENT_METHODS = ['cash', ...NON_CASH_METHODS];
 export const FOLIO_STATUSES = ['open', 'closed', 'cancelled', 'debt', 'refunded', 'partial_refund'];
-export const FOLIO_ITEM_TYPES = ['room', 'extra_bed', 'breakfast', 'early_check_in', 'late_check_out', 'restaurant', 'laundry', 'minibar', 'other', 'discount', 'cancellation_fee', 'refund', 'adjustment'];
+export const FOLIO_ITEM_TYPES = ['room', 'extra_bed', 'breakfast', 'early_checkin', 'late_checkout', 'restaurant', 'laundry', 'minibar', 'other', 'discount', 'cancellation_fee', 'no_show_fee', 'refund', 'adjustment'];
 export const ADDITIONAL_CHARGE_TYPES = [
   ['extra_bed', 'Extra Bed'],
   ['breakfast', 'Breakfast'],
-  ['early_check_in', 'Early Check In'],
-  ['late_check_out', 'Late Check Out'],
+  ['early_checkin', 'Early Check In'],
+  ['late_checkout', 'Late Check Out'],
   ['laundry', 'Laundry'],
   ['restaurant', 'Restaurant'],
   ['minibar', 'Minibar'],
@@ -45,9 +45,15 @@ function raise(error) {
 
 function parsePgError(error, fallback) {
   if (!error) return fallback;
-  if (error.code === '23505') return 'Data sudah ada. Periksa nomor kamar, kode, NIK, atau nomor reservasi yang harus unique.';
-  if (error.code === '23514') return 'Data tidak memenuhi validasi database. Periksa status, tanggal, dan nominal.';
-  return error.message || fallback;
+  console.warn('Supabase error detail:', error);
+  const detail = [error.message, error.details, error.hint].filter(Boolean).join(' ');
+  const lowerDetail = detail.toLowerCase();
+  if (error.code === '23505') return 'Data sudah ada. Periksa nomor kamar, kode, NIK, folio, atau nomor reservasi yang harus unique.';
+  if (error.code === '23514') return `${fallback} Constraint database gagal. Periksa item_type, status, tanggal, qty, dan unit price. Detail: ${detail || 'check constraint violation.'}`;
+  if (error.code === '23502') return `${fallback} Field wajib belum lengkap. Detail: ${detail || 'not-null violation.'}`;
+  if (error.code === '42501') return `${fallback} Akses database ditolak oleh RLS/policy. Jalankan migration RLS terbaru atau cek role user.`;
+  if (lowerDetail.includes('generated') || lowerDetail.includes('line_total')) return `${fallback} Jangan kirim kolom generated seperti line_total dari frontend.`;
+  return detail || fallback;
 }
 
 export function nightsBetween(startDate, endDate) {
@@ -576,7 +582,7 @@ function normalizeFolio(folio) {
   const payments = folio.folio_payments || [];
   return {
     ...folio,
-    folio_items: items.map((item) => ({ ...item, line_total: moneyValue(item.line_total ?? (moneyValue(item.qty) * moneyValue(item.unit_price))) })),
+    folio_items: items.map((item) => ({ ...item, is_void: item.is_void ?? false, line_total: moneyValue(item.line_total ?? (moneyValue(item.qty) * moneyValue(item.unit_price))) })),
     folio_payments: payments
   };
 }
@@ -591,6 +597,39 @@ function validatePaymentPayload(payload) {
   if (paymentGroup === 'non_tunai' && !payload.reference_number?.trim()) throw new Error('Nomor referensi wajib untuk pembayaran non tunai.');
   if (amount <= 0) throw new Error('Nominal payment/refund harus lebih dari 0.');
   return { paymentGroup, paymentMethod, amount };
+}
+
+
+function normalizeFolioItemType(itemType) {
+  const aliases = { early_check_in: 'early_checkin', late_check_out: 'late_checkout' };
+  return aliases[itemType] || itemType;
+}
+
+function validateFolioItemPayload(folioId, payload) {
+  if (!folioId) throw new Error('Folio wajib dipilih sebelum menambah transaksi.');
+  const itemType = normalizeFolioItemType(payload.item_type);
+  if (!FOLIO_ITEM_TYPES.includes(itemType)) throw new Error(`Tipe item folio tidak valid: ${payload.item_type || '-'}. Jalankan migration schema jika constraint database masih lama.`);
+  if (!payload.description?.trim()) throw new Error('Deskripsi item wajib diisi.');
+  const qty = Number(payload.qty);
+  const unitPrice = payload.unit_price === '' || payload.unit_price == null ? NaN : Number(payload.unit_price);
+  if (!Number.isFinite(qty) || qty <= 0) throw new Error('Qty harus angka lebih dari 0.');
+  if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error('Unit price harus angka minimal 0.');
+  const postingDate = payload.posting_date || today();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(postingDate)) throw new Error('Posting date harus format YYYY-MM-DD.');
+  return {
+    reservation_id: payload.reservation_id || null,
+    stay_id: payload.stay_id || null,
+    room_id: payload.room_id || null,
+    item_type: itemType,
+    description: payload.description.trim(),
+    qty,
+    unit_price: unitPrice,
+    posting_date: postingDate
+  };
+}
+
+function assertSuperAdmin(role) {
+  if (role !== 'super_admin') throw new Error('Hanya super admin yang boleh edit/hapus transaksi.');
 }
 
 export const foliosApi = {
@@ -632,22 +671,21 @@ export const foliosApi = {
   async recalculateFolioTotals(folioId, nextStatus = '') {
     const folio = await this.getFolio(folioId);
     const hotel = await hotelSettingsApi.get().catch(() => ({}));
-    const items = folio.folio_items || [];
+    const items = (folio.folio_items || []).filter((item) => item.is_void !== true);
     const payments = folio.folio_payments || [];
+    const itemTotal = (item) => moneyValue(item.line_total ?? (moneyValue(item.qty) * moneyValue(item.unit_price)));
     const chargeSubtotal = items
       .filter((item) => !['discount', 'refund'].includes(item.item_type))
-      .reduce((sum, item) => sum + Math.max(moneyValue(item.line_total), 0), 0);
+      .reduce((sum, item) => sum + Math.max(itemTotal(item), 0), 0);
     const discountPercent = Math.min(Math.max(moneyValue(folio.discount_percent), 0), 100);
-    const manualDiscount = items.filter((item) => item.item_type === 'discount').reduce((sum, item) => sum + Math.abs(moneyValue(item.line_total)), 0);
+    const manualDiscount = items.filter((item) => item.item_type === 'discount').reduce((sum, item) => sum + Math.abs(itemTotal(item)), 0);
     const discountAmount = Math.min(chargeSubtotal, (chargeSubtotal * discountPercent / 100) + manualDiscount);
     const taxableBase = Math.max(chargeSubtotal - discountAmount, 0);
     const taxAmount = taxableBase * moneyValue(hotel.tax_percent) / 100;
     const serviceAmount = taxableBase * moneyValue(hotel.service_charge_percent) / 100;
     const grandTotal = Math.max(taxableBase + taxAmount + serviceAmount, 0);
     const paidAmount = payments.filter((payment) => payment.payment_type === 'payment').reduce((sum, payment) => sum + moneyValue(payment.amount), 0);
-    const refundPayments = payments.filter((payment) => payment.payment_type === 'refund').reduce((sum, payment) => sum + moneyValue(payment.amount), 0);
-    const refundItems = items.filter((item) => item.item_type === 'refund').reduce((sum, item) => sum + Math.abs(moneyValue(item.line_total)), 0);
-    const refundAmount = refundPayments + refundItems;
+    const refundAmount = payments.filter((payment) => payment.payment_type === 'refund').reduce((sum, payment) => sum + moneyValue(payment.amount), 0);
     const balanceDue = Math.max(grandTotal - paidAmount + refundAmount, 0);
     let status = nextStatus || folio.status || 'open';
     if (status === 'closed' && balanceDue > 0) status = 'debt';
@@ -659,26 +697,49 @@ export const foliosApi = {
     return normalizeFolio(data);
   },
   async addFolioItem(folioId, payload) {
-    if (!FOLIO_ITEM_TYPES.includes(payload.item_type)) throw new Error('Tipe item folio tidak valid.');
-    if (!payload.description?.trim()) throw new Error('Deskripsi item wajib diisi.');
-    const qty = moneyValue(payload.qty || 1);
-    const unitPrice = moneyValue(payload.unit_price);
-    if (qty <= 0) throw new Error('Qty harus lebih dari 0.');
-    if (unitPrice < 0) throw new Error('Unit price tidak boleh negatif.');
+    const body = validateFolioItemPayload(folioId, payload);
     const { data, error } = await requireSupabase().from('folio_items').insert({
       folio_id: folioId,
-      reservation_id: payload.reservation_id || null,
-      stay_id: payload.stay_id || null,
-      room_id: payload.room_id || null,
-      item_type: payload.item_type,
-      description: payload.description.trim(),
-      qty,
-      unit_price: unitPrice,
-      posting_date: payload.posting_date || today()
+      ...body
     }).select('*').single();
     if (error) throw new Error(parsePgError(error, 'Gagal menambah item folio.'));
     const folio = await this.recalculateFolioTotals(folioId);
-    await logAuditEvent('add_folio_item', 'folio_items', data.id, payload);
+    await logAuditEvent('add_folio_item', 'folio_items', data.id, { folio_id: folioId, ...body });
+    return folio;
+  },
+  async updateFolioItem(folioId, itemId, payload, role) {
+    assertSuperAdmin(role);
+    const before = await this.getFolio(folioId).then((folio) => (folio.folio_items || []).find((item) => item.id === itemId));
+    if (!before) throw new Error('Folio item tidak ditemukan.');
+    const body = validateFolioItemPayload(folioId, payload);
+    const { data, error } = await requireSupabase().from('folio_items').update({
+      item_type: body.item_type,
+      description: body.description,
+      qty: body.qty,
+      unit_price: body.unit_price,
+      posting_date: body.posting_date,
+      updated_at: new Date().toISOString()
+    }).eq('id', itemId).eq('folio_id', folioId).select('*').single();
+    if (error) throw new Error(parsePgError(error, 'Gagal mengedit item folio.'));
+    const folio = await this.recalculateFolioTotals(folioId);
+    await logAuditEvent('edit_folio_item', 'folio_items', itemId, { before, after: data });
+    return folio;
+  },
+  async voidFolioItem(folioId, itemId, role, reason = '') {
+    assertSuperAdmin(role);
+    const before = await this.getFolio(folioId).then((folio) => (folio.folio_items || []).find((item) => item.id === itemId));
+    if (!before) throw new Error('Folio item tidak ditemukan.');
+    const { data: userData } = await requireSupabase().auth.getUser();
+    const { data, error } = await requireSupabase().from('folio_items').update({
+      is_void: true,
+      void_reason: reason || 'Void by super admin',
+      voided_by: userData?.user?.id || null,
+      voided_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }).eq('id', itemId).eq('folio_id', folioId).select('*').single();
+    if (error) throw new Error(parsePgError(error, 'Gagal void item folio. Jika ditolak RLS, jalankan migration RLS folio_items terbaru.'));
+    const folio = await this.recalculateFolioTotals(folioId);
+    await logAuditEvent('void_folio_item', 'folio_items', itemId, { before, after: data, reason });
     return folio;
   },
   async addRoomChargeOnce(folioId, reservation, stay = null) {
@@ -760,7 +821,7 @@ export const foliosApi = {
     const fee = moneyValue(options.no_show_fee);
     if (fee <= 0) return null;
     const folio = await this.ensureForReservation(reservation);
-    return this.addFolioItem(folio.id, { reservation_id: reservation.id, item_type: 'cancellation_fee', description: `No-show fee ${reservation.reservation_code}`, qty: 1, unit_price: fee });
+    return this.addFolioItem(folio.id, { reservation_id: reservation.id, item_type: 'no_show_fee', description: `No-show fee ${reservation.reservation_code}`, qty: 1, unit_price: fee });
   }
 };
 
@@ -1013,7 +1074,7 @@ export const reportsApi = {
         payment_collected: revenuePayments.reduce((total, payment) => total + moneyValue(payment.amount), 0),
         outstanding_balance: folios.reduce((total, folio) => total + moneyValue(folio.balance_due), 0),
         refund_total: refundPayments.reduce((total, payment) => total + moneyValue(payment.amount), 0),
-        cancellation_total: folios.flatMap((folio) => folio.folio_items || []).filter((item) => item.item_type === 'cancellation_fee').reduce((total, item) => total + moneyValue(item.line_total), 0),
+        cancellation_total: folios.flatMap((folio) => folio.folio_items || []).filter((item) => item.item_type === 'cancellation_fee' && item.is_void !== true).reduce((total, item) => total + moneyValue(item.line_total), 0),
         payment_methods: methods
       },
       arrivalsDepartures: {

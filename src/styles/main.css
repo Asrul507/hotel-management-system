@@ -70,3 +70,4 @@ button.small { width: auto; padding: .45rem .7rem; margin: 0; white-space: nowra
 .badge.debt { background: #7f1d1d; color: #fecaca; }
 .badge.closed { background: #14532d; color: #bbf7d0; }
 .badge.refunded, .badge.partial_refund { background: #581c87; color: #e9d5ff; }
+.void-row { opacity: .65; text-decoration: line-through; }

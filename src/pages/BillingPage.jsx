@@ -19,6 +19,7 @@ export default function BillingPage() {
   const [reservationForm, setReservationForm] = useState(emptyReservation);
   const [roomChoices, setRoomChoices] = useState([]);
   const [charge, setCharge] = useState(emptyCharge);
+  const [editItem, setEditItem] = useState(null);
   const [payment, setPayment] = useState(emptyPayment);
   const [refund, setRefund] = useState(emptyPayment);
   const [discount, setDiscount] = useState(0);
@@ -37,6 +38,7 @@ export default function BillingPage() {
   const roomCharges = (selected?.folio_items || []).filter((item) => item.item_type === 'room');
   const payments = (selected?.folio_payments || []).filter((item) => item.payment_type === 'payment');
   const refunds = (selected?.folio_payments || []).filter((item) => item.payment_type === 'refund');
+  const canManageItems = profile?.role === 'super_admin';
 
   const load = async () => {
     setLoading(true);
@@ -69,6 +71,7 @@ export default function BillingPage() {
   useEffect(() => {
     if (!selected) return;
     setDiscount(selected.discount_percent || 0);
+    setEditItem(null);
     setReservationForm((form) => ({ ...form, guest_id: selected.guest_id || '' }));
   }, [selected?.id]);
 
@@ -144,6 +147,38 @@ export default function BillingPage() {
       return;
     }
     setCharge((current) => ({ ...current, [field]: value }));
+  }
+
+  function startEditItem(item) {
+    setEditItem({
+      id: item.id,
+      item_type: item.item_type,
+      description: item.description || '',
+      qty: item.qty ?? 1,
+      unit_price: item.unit_price ?? 0,
+      posting_date: item.posting_date || today()
+    });
+  }
+
+  function updateEditItem(field, value) {
+    if (field === 'item_type') {
+      const label = ADDITIONAL_CHARGE_TYPES.find(([key]) => key === value)?.[1] || '';
+      setEditItem((current) => ({ ...current, item_type: value, description: value === 'other' ? current.description : (current.description || label) }));
+      return;
+    }
+    setEditItem((current) => ({ ...current, [field]: value }));
+  }
+
+  function confirmClosedFolioAction(action) {
+    if (!['closed', 'debt', 'refunded'].includes(selected?.status)) return true;
+    return window.confirm(`Folio sudah ${selected.status}. Lanjut ${action} transaksi?`);
+  }
+
+  function voidItem(item) {
+    if (!window.confirm('Yakin hapus/void transaksi ini? Total folio akan dihitung ulang.')) return;
+    if (!confirmClosedFolioAction('void')) return;
+    const reason = window.prompt('Alasan void transaksi?', 'Void by super admin') || 'Void by super admin';
+    run(`void-${item.id}`, () => foliosApi.voidFolioItem(selected.id, item.id, profile?.role, reason), 'Transaksi berhasil di-void.');
   }
 
   function updatePayment(setter) {
@@ -222,7 +257,15 @@ export default function BillingPage() {
           <label>Posting date<input type="date" value={charge.posting_date} onChange={(e) => updateCharge('posting_date', e.target.value)} /></label>
           <p><strong>Total otomatis</strong><br />{money.format(chargeTotal || 0)}</p>
           <button disabled={saving === 'charge'}>Add Charge</button>
-        </form><FolioItems title="Room Charges" rows={roomCharges} /><FolioItems title="Additional Charges" rows={charges} /></div>}
+        </form>{editItem && <form className="card form-grid" onSubmit={(e) => { e.preventDefault(); if (!confirmClosedFolioAction('edit')) return; run(`edit-${editItem.id}`, async () => { await foliosApi.updateFolioItem(selected.id, editItem.id, editItem, profile?.role); setEditItem(null); }, 'Transaksi berhasil diupdate.'); }}>
+          <h2>Edit Folio Item</h2>
+          <label>Item<select value={editItem.item_type} onChange={(e) => updateEditItem('item_type', e.target.value)}>{ADDITIONAL_CHARGE_TYPES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}<option value="room">Room Charge</option><option value="cancellation_fee">Cancellation Fee</option><option value="no_show_fee">No-show Fee</option><option value="adjustment">Adjustment</option></select></label>
+          <label>Description<input required value={editItem.description} onChange={(e) => updateEditItem('description', e.target.value)} /></label>
+          <label>Qty<input type="number" min="0.01" step="0.01" required value={editItem.qty} onChange={(e) => updateEditItem('qty', e.target.value)} /></label>
+          <label>Unit price<input type="number" min="0" step="0.01" required value={editItem.unit_price} onChange={(e) => updateEditItem('unit_price', e.target.value)} /></label>
+          <label>Posting date<input type="date" required value={editItem.posting_date} onChange={(e) => updateEditItem('posting_date', e.target.value)} /></label>
+          <div className="button-row"><button disabled={saving === `edit-${editItem.id}`}>Simpan Edit</button><button type="button" className="secondary" onClick={() => setEditItem(null)}>Batal</button></div>
+        </form>}<FolioItems title="Room Charges" rows={roomCharges} canManage={canManageItems} onEdit={startEditItem} onVoid={voidItem} saving={saving} /><FolioItems title="Additional Charges" rows={charges} canManage={canManageItems} onEdit={startEditItem} onVoid={voidItem} saving={saving} /></div>}
 
         {activeTab === 'payments' && <div className="page-stack"><div className="card"><h2>Add Payment</h2><PaymentForm state={payment} setter={updatePayment(setPayment)} onSubmit={(e) => { e.preventDefault(); run('payment', async () => { await foliosApi.addFolioPayment(selected.id, payment); setPayment(emptyPayment); }, 'Payment tersimpan.'); }} saving={saving === 'payment'} /></div><PaymentTable title="Payments" rows={payments} /></div>}
 
@@ -236,8 +279,8 @@ function FolioTable({ title, rows, columns, render }) {
   return <div className="card table-card"><h2>{title}</h2>{rows.length === 0 ? <p className="muted">Belum ada data.</p> : <table><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.id}>{render(row).map((value, index) => <td key={index}>{value}</td>)}</tr>)}</tbody></table>}</div>;
 }
 
-function FolioItems({ title, rows }) {
-  return <div className="card table-card"><h2>{title}</h2>{rows.length === 0 ? <p className="muted">Belum ada item.</p> : <table><thead><tr><th>Tanggal</th><th>Type</th><th>Deskripsi</th><th>Qty</th><th>Harga</th><th>Total</th></tr></thead><tbody>{rows.map((item) => <tr key={item.id}><td>{item.posting_date}</td><td>{item.item_type}</td><td>{item.description}</td><td>{item.qty}</td><td>{money.format(item.unit_price || 0)}</td><td>{money.format(item.line_total || 0)}</td></tr>)}</tbody></table>}</div>;
+function FolioItems({ title, rows, canManage = false, onEdit, onVoid, saving = '' }) {
+  return <div className="card table-card"><h2>{title}</h2>{rows.length === 0 ? <p className="muted">Belum ada item.</p> : <table><thead><tr><th>Tanggal</th><th>Type</th><th>Deskripsi</th><th>Qty</th><th>Harga</th><th>Total</th><th>Status</th>{canManage && <th>Aksi</th>}</tr></thead><tbody>{rows.map((item) => <tr key={item.id} className={item.is_void ? 'void-row' : ''}><td>{item.posting_date}</td><td>{item.item_type}</td><td>{item.description}{item.void_reason && <><br /><small>Void reason: {item.void_reason}</small></>}</td><td>{item.qty}</td><td>{money.format(item.unit_price || 0)}</td><td>{money.format(item.line_total || 0)}</td><td>{item.is_void ? <span className="badge cancelled">VOID</span> : <span className="badge open">ACTIVE</span>}</td>{canManage && <td className="button-row"><button className="small" disabled={item.is_void || saving === `edit-${item.id}`} onClick={() => onEdit(item)}>Edit</button><button className="small secondary" disabled={item.is_void || saving === `void-${item.id}`} onClick={() => onVoid(item)}>Hapus/Void</button></td>}</tr>)}</tbody></table>}</div>;
 }
 
 function PaymentTable({ title, rows }) {
