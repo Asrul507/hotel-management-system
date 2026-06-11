@@ -336,6 +336,7 @@ export const roomsApi = {
     const normalized = normalizeRoom(room);
     const privileged = ['super_admin', 'manager'].includes(role);
     if (['cashier', 'receptionist'].includes(role)) throw new Error('Role ini tidak boleh mengubah status kamar manual.');
+    if (role === 'housekeeping' && normalized.fo_status === 'unavailable') throw new Error('Kamar FO unavailable tidak boleh diubah oleh housekeeping.');
     if (!canTransitionHkStatus(normalized, hk_status, role, { allowGroupChange, hasCheckedInStay })) {
       throw new Error('Transisi HK status tidak valid. Perubahan vacant ↔ occupied harus lewat check-in/check-out.');
     }
@@ -352,6 +353,32 @@ export const roomsApi = {
     if (error) throw new Error(parsePgError(error, 'Gagal memperbarui status HK.'));
     await logAuditEvent('update_room_hk_status', 'rooms', normalized.id, body);
     return normalizeRoom(data);
+  },
+  async bulkUpdateHkStatus(roomIds, targetStatus, notes = '', role = '') {
+    if (!Array.isArray(roomIds) || roomIds.length === 0) throw new Error('Pilih minimal satu kamar untuk bulk update.');
+    if (!HK_STATUSES.includes(targetStatus)) throw new Error('Target HK status tidak valid.');
+    const privileged = ['super_admin', 'manager'].includes(role);
+    if (['cashier', 'receptionist'].includes(role)) throw new Error('Role ini tidak boleh bulk update housekeeping.');
+    if (OUT_OF_INVENTORY_HK_STATUSES.includes(targetStatus) && !privileged) throw new Error('OOO/OOS hanya boleh diset manager atau super admin.');
+    if (OUT_OF_INVENTORY_HK_STATUSES.includes(targetStatus) && !notes?.trim()) throw new Error('Catatan wajib untuk bulk update OOO/OOS.');
+
+    const rooms = await this.list();
+    const targetRooms = roomIds.map((id) => rooms.find((room) => room.id === id)).filter(Boolean);
+    if (targetRooms.length !== roomIds.length) throw new Error('Sebagian kamar tidak ditemukan. Refresh halaman lalu coba lagi.');
+
+    const settled = await Promise.allSettled(targetRooms.map(async (room) => {
+      if (role === 'housekeeping' && room.fo_status === 'unavailable') throw new Error(`Kamar ${room.room_number}: FO unavailable tidak boleh diubah housekeeping.`);
+      return this.updateHkStatus(room, targetStatus, { role, notes });
+    }));
+    const succeeded = [];
+    const failed = [];
+    settled.forEach((result, index) => {
+      const room = targetRooms[index];
+      if (result.status === 'fulfilled') succeeded.push(result.value);
+      else failed.push({ room_id: room.id, room_number: room.room_number, error: result.reason?.message || 'Gagal update.' });
+    });
+    await logAuditEvent('bulk_update_housekeeping', 'rooms', null, { room_ids: roomIds, target_hk_status: targetStatus, notes, success: succeeded.length, failed }).catch(() => {});
+    return { succeeded, failed, total: targetRooms.length };
   },
   async updateStatus(id, status, role = 'manager') {
     if (FO_STATUSES.includes(status)) return this.updateFoStatus(id, status, role);
@@ -454,6 +481,39 @@ export const reservationsApi = {
     const { data, error } = await requireSupabase().from('reservations').select(reservationSelect).eq('check_in_date', date).in('status', ['reserved', 'booked', 'confirmed']).order('created_at');
     raise(error);
     return (data || []).map(normalizeReservation);
+  },
+  async listByView(view = 'all', filters = {}) {
+    const startDate = filters.startDate || today();
+    const endDate = filters.endDate || startDate;
+    const inRange = (value) => {
+      const date = String(value || '').slice(0, 10);
+      return date && date >= startDate && date <= endDate;
+    };
+    if (view === 'arrival' || view === 'departure') {
+      const stays = await staysApi.list().catch(() => []);
+      let rows = stays.filter((stay) => view === 'arrival' ? inRange(stay.actual_check_in || stay.checkin_at) : inRange(stay.actual_check_out || stay.checkout_at));
+      if (view === 'departure') rows = rows.filter((stay) => stay.status === 'checked_out' || stay.actual_check_out || stay.checkout_at);
+      return rows.map((stay) => {
+        const reservation = normalizeReservation(stay.reservations || {});
+        return normalizeReservation({
+          ...reservation,
+          id: reservation.id || stay.reservation_id || stay.id,
+          stay_id: stay.id,
+          guest_id: stay.guest_id,
+          guests: stay.guests || reservation.guests,
+          room_id: stay.room_id,
+          rooms: stay.rooms || reservation.rooms,
+          status: stay.status,
+          actual_check_in: stay.actual_check_in || stay.checkin_at,
+          actual_check_out: stay.actual_check_out || stay.checkout_at,
+          folio_id: stay.folio_id || reservation.folio_id
+        });
+      });
+    }
+    const rows = await this.list({ ...filters, status: view === 'expected_arrival' ? 'reserved' : filters.status });
+    if (view === 'expected_arrival') return rows.filter((reservation) => inRange(reservation.check_in_date) && reservation.status === 'reserved');
+    if (view === 'expected_departure') return rows.filter((reservation) => inRange(reservation.check_out_date) && ['reserved', 'checked_in'].includes(reservation.status));
+    return rows;
   },
   async create(payload) {
     const reservationPayload = await this.buildPayload(payload);
@@ -888,6 +948,49 @@ export const staysApi = {
     const invoice = await upsertInvoiceForStay({ ...normalizeStay(data), invoices: normalized.invoices || [] }, true);
     await logAuditEvent('check_out', 'stays', normalized.id, { invoice_id: invoice?.id, folio_id: folio?.id });
     return normalizeStay(data);
+  },
+  async moveRoom(stay, newRoomId, reason = '', role = '') {
+    const normalized = normalizeStay(stay);
+    if (!['super_admin', 'manager', 'receptionist'].includes(role)) throw new Error('Role ini tidak boleh melakukan pindah kamar.');
+    if (normalized.status !== 'checked_in') throw new Error('Hanya tamu in-house yang bisa dipindah kamar.');
+    if (!newRoomId || newRoomId === normalized.room_id) throw new Error('Pilih kamar baru yang berbeda.');
+    if (!reason?.trim()) throw new Error('Alasan pindah kamar wajib diisi.');
+    const checkInDate = normalized.reservations?.check_in_date || String(normalized.actual_check_in || normalized.checkin_at || today()).slice(0, 10);
+    const checkOutDate = normalized.reservations?.check_out_date || addDaysToDate(today(), 1);
+    const candidates = await roomsApi.availableForStay({
+      check_in_date: checkInDate,
+      check_out_date: checkOutDate,
+      exclude_reservation_id: normalized.reservation_id || ''
+    });
+    const newRoom = candidates.find((room) => room.id === newRoomId);
+    if (!newRoom) throw new Error('Kamar baru tidak ready atau bentrok dengan reservasi/stay lain.');
+    const now = new Date().toISOString();
+    const oldRoomId = normalized.room_id;
+    const { data, error } = await requireSupabase().from('stays').update({ room_id: newRoomId, updated_at: now }).eq('id', normalized.id).eq('status', 'checked_in').select(staySelect).single();
+    raise(error);
+    if (normalized.reservation_id) {
+      const { error: reservationError } = await requireSupabase().from('reservations').update({ room_id: newRoomId, updated_at: now }).eq('id', normalized.reservation_id);
+      raise(reservationError);
+    }
+    await roomsApi.updateHkStatus({ id: oldRoomId, fo_status: 'available', hk_status: normalized.rooms?.hk_status || 'OC' }, 'VD', { role: 'manager', allowGroupChange: true, notes: `Room move: ${reason}` });
+    await roomsApi.updateHkStatus(newRoom, 'OC', { role: 'manager', allowGroupChange: true, notes: `Room move: ${reason}` });
+    const { data: userData } = await requireSupabase().auth.getUser().catch(() => ({ data: null }));
+    try {
+      const { error: logError } = await requireSupabase().from('room_move_logs').insert({
+        stay_id: normalized.id,
+        reservation_id: normalized.reservation_id || null,
+        guest_id: normalized.guest_id || normalized.guests?.id || null,
+        old_room_id: oldRoomId,
+        new_room_id: newRoomId,
+        reason: reason.trim(),
+        moved_by: userData?.user?.id || null
+      });
+      if (logError) console.warn('Room move log gagal:', logError.message);
+    } catch (logError) {
+      console.warn('Room move log dilewati:', logError.message);
+    }
+    await logAuditEvent('room_move', 'stays', normalized.id, { old_room_id: oldRoomId, new_room_id: newRoomId, reason });
+    return normalizeStay(data);
   }
 };
 
@@ -965,12 +1068,7 @@ export const housekeepingApi = {
   },
   async bulkUpdate(rooms, hk_status, options = {}) {
     if (!Array.isArray(rooms) || rooms.length === 0) throw new Error('Pilih kamar untuk bulk update.');
-    const updated = [];
-    for (const room of rooms) {
-      updated.push(await roomsApi.updateHkStatus(room, hk_status, options));
-    }
-    await logAuditEvent('bulk_update_housekeeping', 'rooms', null, { room_ids: rooms.map((room) => room.id), hk_status });
-    return updated;
+    return roomsApi.bulkUpdateHkStatus(rooms.map((room) => room.id), hk_status, options.notes || '', options.role || '');
   }
 };
 
@@ -1018,10 +1116,12 @@ export const forecastApi = {
       const occupied_rooms = new Set([...actualOccupied, ...committed]).size;
       const expected_arrival = reservations.filter((reservation) => reservation.check_in_date === date && reservation.status === 'reserved').length;
       const expected_departure = reservations.filter((reservation) => reservation.check_out_date === date && ['checked_in', 'reserved'].includes(reservation.status)).length;
+      const arrival = stays.filter((stay) => String(stay.actual_check_in || stay.checkin_at || '').slice(0, 10) === date).length;
+      const departure = stays.filter((stay) => String(stay.actual_check_out || stay.checkout_at || '').slice(0, 10) === date).length;
       const available_rooms = inventory_rooms - occupied_rooms;
       const occupancy_percentage = inventory_rooms ? Math.round((occupied_rooms / inventory_rooms) * 10000) / 100 : 0;
       const warning = available_rooms < 0 ? 'Available negatif: cek double booking atau oversell unassigned.' : '';
-      return { date, total_rooms, inventory_rooms, ooo_rooms, oos_rooms, occupied_rooms, expected_arrival, expected_departure, available_rooms, occupancy_percentage, warning };
+      return { date, total_rooms, inventory_rooms, ooo_rooms, oos_rooms, occupied_rooms, expected_arrival, expected_departure, arrival, departure, available_rooms, occupancy_percentage, warning };
     });
     const totals = rows.reduce((acc, row) => {
       Object.entries(row).forEach(([key, value]) => {
@@ -1031,6 +1131,59 @@ export const forecastApi = {
     }, {});
     const average_occupancy_percentage = rows.length ? Math.round((totals.occupancy_percentage / rows.length) * 100) / 100 : 0;
     return { rows, summary: { ...totals, days: rows.length, average_occupancy_percentage } };
+  }
+};
+
+
+export const profilesApi = {
+  async list({ search = '', role = 'all', status = 'all' } = {}) {
+    let query = requireSupabase().from('profiles').select('*').order('created_at', { ascending: false });
+    if (role !== 'all') query = query.eq('role', role);
+    if (status === 'active') query = query.eq('is_active', true);
+    if (status === 'inactive') query = query.eq('is_active', false);
+    const { data, error } = await query;
+    raise(error);
+    let rows = data || [];
+    if (search?.trim()) {
+      const value = search.trim().toLowerCase();
+      rows = rows.filter((profile) => [profile.email, profile.full_name, profile.phone, profile.role].some((field) => String(field || '').toLowerCase().includes(value)));
+    }
+    return rows;
+  },
+  async createProfile(payload, role = '') {
+    assertSuperAdmin(role);
+    if (!payload.email?.trim()) throw new Error('Email wajib diisi.');
+    if (!payload.id?.trim()) throw new Error('Auth User UUID wajib diisi karena frontend anon key tidak boleh membuat Supabase Auth user. Buat/invite Auth user dari Dashboard lebih dulu.');
+    const body = {
+      id: payload.id.trim(),
+      email: payload.email.trim().toLowerCase(),
+      full_name: payload.full_name?.trim() || payload.email.trim(),
+      phone: payload.phone?.trim() || null,
+      role: payload.role || 'receptionist',
+      is_active: payload.is_active ?? true,
+      updated_at: new Date().toISOString()
+    };
+    Object.keys(body).forEach((key) => body[key] === undefined && delete body[key]);
+    const { data, error } = await requireSupabase().from('profiles').insert(body).select('*').single();
+    if (error) throw new Error(parsePgError(error, 'Gagal membuat profile user. Pastikan Auth user sudah ada dan RLS mengizinkan super_admin.'));
+    await logAuditEvent('create_profile_user', 'profiles', data.id, body);
+    return data;
+  },
+  async updateProfile(id, payload, role = '') {
+    assertSuperAdmin(role);
+    const body = {
+      email: payload.email?.trim()?.toLowerCase() || null,
+      full_name: payload.full_name?.trim() || null,
+      phone: payload.phone?.trim() || null,
+      role: payload.role,
+      is_active: payload.is_active,
+      updated_at: new Date().toISOString()
+    };
+    Object.keys(body).forEach((key) => body[key] === undefined && delete body[key]);
+    const { data, error } = await requireSupabase().from('profiles').update(body).eq('id', id).select('*').single();
+    if (error) throw new Error(parsePgError(error, 'Gagal update profile user.'));
+    await logAuditEvent('update_profile_user', 'profiles', id, body);
+    return data;
   }
 };
 

@@ -14,6 +14,7 @@ const menus = [
   ['/housekeeping', 'Housekeeping', 'housekeeping'],
   ['/maintenance', 'Maintenance', 'maintenance'],
   ['/reports', 'Reports', 'reports'],
+  ['/users', 'Users', 'users'],
   ['/settings', 'Settings', 'settings']
 ];
 

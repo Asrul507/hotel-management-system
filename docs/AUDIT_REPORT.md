@@ -113,3 +113,25 @@ Aplikasi sudah memiliki auth, routing, Supabase client yang aman berbasis enviro
 - Menu Reservations diubah menjadi list/filter only supaya input reservasi tetap lewat Folio dan otomatis membawa folio/no bill.
 - Check-in/out sebelumnya dapat terlihat unpaid karena membaca billing legacy invoice dari `calculateStayBilling`; sekarang halaman memakai status folio terbaru via helper billing status.
 - CSS action button dan responsive layout diperkuat dengan action bar, icon button, table actions, flex-wrap, dan media query untuk desktop/tablet/mobile.
+
+## Advanced Feature Audit - Housekeeping, Room Move, Users, Forecast, Reservations
+
+Implemented features:
+- Housekeeping bulk HK status updates with role-aware validation and partial-success reporting.
+- Room move from Check-in/out for in-house stays with ready-room validation, room status updates, reservation/stay room update, room-move log insert, and audit event.
+- Super-admin User Management page for profile listing, filtering, role/status edits, and safe profile creation after Supabase Auth user creation.
+- Forecast columns and summary totals for Expected Arrival, Expected Departure, Arrival, and Departure.
+- Reservation action filters for all reservations, expected arrival/departure, and actual arrival/departure.
+- Reusable responsive action button classes: `action-toolbar`, `action-pill`, `icon-action`, and `compact-actions`.
+
+Build verification:
+- `npm run build` completed successfully after implementation.
+
+Manual test checklist recommended after applying `supabase/schema.sql`:
+1. Bulk update multiple `VD` rooms to `VC`.
+2. Verify housekeeping cannot set `OOO`/`OOS`; manager/super_admin can with notes.
+3. Move an in-house guest to a ready room and verify old room `VD`, new room `OC`, stay/reservation room IDs, and `room_move_logs`.
+4. Login as `super_admin` and verify Users menu, profile list, edits, and active/inactive status.
+5. Verify non-super-admin users cannot see `/users`.
+6. Verify Forecast movement columns and totals show `0` on empty data.
+7. Verify Reservations action filters use selected date range and no reservation-entry form appears on Reservations page.

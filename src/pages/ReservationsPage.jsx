@@ -1,13 +1,21 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { RESERVATION_STATUSES, foliosApi, nightsBetween, reservationsApi } from '../services/api';
+import { RESERVATION_STATUSES, foliosApi, nightsBetween, reservationsApi, today } from '../services/api';
 
 const money = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 });
+const reservationViews = [
+  ['all', '🧾', 'Semua'],
+  ['expected_arrival', '➡️', 'Expected Arrival'],
+  ['expected_departure', '⬅️', 'Expected Departure'],
+  ['arrival', '✅', 'Arrival'],
+  ['departure', '🏁', 'Departure']
+];
 
 export default function ReservationsPage() {
   const [reservations, setReservations] = useState([]);
   const [folios, setFolios] = useState([]);
-  const [filters, setFilters] = useState({ status: 'all', search: '', startDate: '', endDate: '' });
+  const [activeView, setActiveView] = useState('all');
+  const [filters, setFilters] = useState({ status: 'all', search: '', startDate: today(), endDate: today() });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -16,8 +24,9 @@ export default function ReservationsPage() {
     setLoading(true);
     setError('');
     try {
+      const effectiveFilters = { ...filters, startDate: filters.startDate || today(), endDate: filters.endDate || filters.startDate || today() };
       const [reservationData, folioData] = await Promise.all([
-        reservationsApi.list(filters),
+        reservationsApi.listByView(activeView, effectiveFilters),
         foliosApi.list().catch(() => [])
       ]);
       setReservations(reservationData);
@@ -29,7 +38,7 @@ export default function ReservationsPage() {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [activeView]);
 
   async function action(reservation, status) {
     const options = {};
@@ -53,14 +62,18 @@ export default function ReservationsPage() {
   }
 
   const folioNumber = (reservation) => folios.find((folio) => folio.id === reservation.folio_id)?.folio_number || reservation.folio_id || '-';
+  const formatDateTime = (value) => value ? String(value).slice(0, 16).replace('T', ' ') : '-';
 
   return <div className="page-stack">
     <div className="page-header"><div><h1>Reservations</h1><p>Menu ini hanya untuk melihat dan memfilter reservasi. Reservasi baru dibuat dari menu Folio agar otomatis terhubung ke nomor bill/folio.</p></div><Link className="button-link" to="/billing">Buat Reservasi dari Folio</Link></div>
     {error && <div className="alert error">{error}</div>}
-    <div className="alert"><strong>Info:</strong> Reservasi baru dibuat dari menu Folio / Billing supaya selalu memiliki folio/no bill. Gunakan filter di bawah untuk mencari data reservasi.</div>
+    <div className="alert"><strong>Info:</strong> Pilih sub menu untuk Expected Arrival/Departure atau actual Arrival/Departure sesuai rentang tanggal. Default tanggal adalah hari ini.</div>
+    <div className="card action-toolbar" role="toolbar" aria-label="Reservation view filters">
+      {reservationViews.map(([value, icon, label]) => <button key={value} type="button" className={`action-pill ${activeView === value ? 'active' : ''}`} title={label} aria-label={label} onClick={() => setActiveView(value)}><span className="icon-action" aria-hidden="true">{icon}</span>{label}</button>)}
+    </div>
     <div className="card table-card">
-      <div className="page-header"><div><h2>Daftar Reservasi</h2></div><form className="filter-grid compact" onSubmit={(e) => { e.preventDefault(); load(); }}><input placeholder="Guest / kode / kamar" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} /><select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}><option value="all">Semua status</option>{RESERVATION_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}</select><input type="date" value={filters.startDate} onChange={(e) => setFilters({ ...filters, startDate: e.target.value })} /><input type="date" value={filters.endDate} onChange={(e) => setFilters({ ...filters, endDate: e.target.value })} /><button className="small">Filter</button></form></div>
-      {loading ? <p>Memuat reservasi...</p> : reservations.length === 0 ? <p className="muted">Reservasi tidak ditemukan.</p> : <table><thead><tr><th>Kode</th><th>Folio</th><th>Tamu</th><th>Kamar</th><th>Tanggal</th><th>Rate/Deposit</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{reservations.map((reservation) => <tr key={reservation.id}><td>{reservation.reservation_code}</td><td>{folioNumber(reservation)}</td><td>{reservation.guests?.full_name}{reservation.guests?.is_blacklisted && <><br /><span className="badge cancelled">Blacklist</span></>}<br /><small>{reservation.guests?.phone}</small></td><td>{reservation.rooms?.room_number || 'Unassigned'}<br /><small>{reservation.room_types?.name}</small></td><td>{reservation.check_in_date} → {reservation.check_out_date}<br /><small>{reservation.nights || nightsBetween(reservation.check_in_date, reservation.check_out_date)} malam</small></td><td>{money.format(reservation.room_rate || 0)}<br /><small>DP {money.format(reservation.deposit_amount || 0)}</small></td><td><span className={`badge ${reservation.status}`}>{reservation.status}</span></td><td><div className="table-actions"><button className="icon-button" title="Lihat detail" onClick={() => window.alert(`Reservasi ${reservation.reservation_code}\nTamu: ${reservation.guests?.full_name || '-'}\nFolio: ${folioNumber(reservation)}\nTanggal: ${reservation.check_in_date} → ${reservation.check_out_date}`)}>ℹ</button><button className="icon-button" title="Cancel" disabled={saving === reservation.id || ['checked_out','cancelled','checked_in'].includes(reservation.status)} onClick={() => action(reservation, 'cancelled')}>✕</button><button className="icon-button" title="No-show" disabled={saving === reservation.id || reservation.status !== 'reserved'} onClick={() => action(reservation, 'no_show')}>!</button></div></td></tr>)}</tbody></table>}
+      <div className="page-header"><div><h2>Daftar Reservasi</h2><p className="muted">View aktif: {reservationViews.find(([value]) => value === activeView)?.[2]}</p></div><form className="filter-grid compact" onSubmit={(e) => { e.preventDefault(); load(); }}><input placeholder="Guest / kode / kamar" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} /><select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })} disabled={activeView !== 'all'}><option value="all">Semua status</option>{RESERVATION_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}</select><input type="date" value={filters.startDate} onChange={(e) => setFilters({ ...filters, startDate: e.target.value })} /><input type="date" value={filters.endDate} onChange={(e) => setFilters({ ...filters, endDate: e.target.value })} /><button className="small">Filter</button></form></div>
+      {loading ? <p>Memuat reservasi...</p> : reservations.length === 0 ? <p className="muted">Reservasi tidak ditemukan.</p> : <table><thead><tr><th>Kode</th><th>Folio</th><th>Tamu</th><th>Kamar</th><th>Check-in</th><th>Check-out</th><th>Actual In</th><th>Actual Out</th><th>Rate/Deposit</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{reservations.map((reservation) => <tr key={`${reservation.id}-${reservation.stay_id || ''}`}><td>{reservation.reservation_code || '-'}</td><td>{folioNumber(reservation)}</td><td>{reservation.guests?.full_name || '-'}{reservation.guests?.is_blacklisted && <><br /><span className="badge cancelled">Blacklist</span></>}<br /><small>{reservation.guests?.phone}</small></td><td>{reservation.rooms?.room_number || 'Unassigned'}<br /><small>{reservation.room_types?.name || reservation.rooms?.room_types?.name}</small></td><td>{reservation.check_in_date || '-'}</td><td>{reservation.check_out_date || '-'}<br /><small>{reservation.check_in_date && reservation.check_out_date ? `${reservation.nights || nightsBetween(reservation.check_in_date, reservation.check_out_date)} malam` : ''}</small></td><td>{formatDateTime(reservation.actual_check_in)}</td><td>{formatDateTime(reservation.actual_check_out)}</td><td>{money.format(reservation.room_rate || 0)}<br /><small>DP {money.format(reservation.deposit_amount || 0)}</small></td><td><span className={`badge ${reservation.status}`}>{reservation.status}</span></td><td><div className="table-actions compact-actions"><button className="icon-button" title="Lihat detail" aria-label="Lihat detail" onClick={() => window.alert(`Reservasi ${reservation.reservation_code || '-'}\nTamu: ${reservation.guests?.full_name || '-'}\nFolio: ${folioNumber(reservation)}\nTanggal: ${reservation.check_in_date || '-'} → ${reservation.check_out_date || '-'}`)}>ℹ</button><button className="icon-button" title="Cancel" aria-label="Cancel reservation" disabled={saving === reservation.id || ['checked_out','cancelled','checked_in'].includes(reservation.status) || !reservation.reservation_code} onClick={() => action(reservation, 'cancelled')}>✕</button><button className="icon-button" title="No-show" aria-label="Mark no-show" disabled={saving === reservation.id || reservation.status !== 'reserved' || !reservation.reservation_code} onClick={() => action(reservation, 'no_show')}>!</button></div></td></tr>)}</tbody></table>}
     </div>
   </div>;
 }

@@ -672,3 +672,56 @@ drop policy if exists "authenticated read folio items" on folio_items;
 create policy "authenticated read folio items" on folio_items for select to authenticated using (true);
 drop policy if exists "authenticated manage folio items" on folio_items;
 create policy "authenticated manage folio items" on folio_items for all to authenticated using (true) with check (true);
+
+-- Advanced operations additions (idempotent): user management, room move logs, and forecast/reservation lookup indexes.
+alter table profiles add column if not exists email text;
+alter table profiles add column if not exists phone text;
+alter table profiles add column if not exists is_active boolean not null default true;
+alter table profiles add column if not exists created_at timestamptz not null default now();
+alter table profiles add column if not exists updated_at timestamptz not null default now();
+create index if not exists profiles_email_idx on profiles(email);
+create index if not exists profiles_role_active_idx on profiles(role, is_active);
+
+create table if not exists room_move_logs (
+  id uuid primary key default gen_random_uuid(),
+  stay_id uuid references stays(id),
+  reservation_id uuid references reservations(id),
+  guest_id uuid references guests(id),
+  old_room_id uuid references rooms(id),
+  new_room_id uuid references rooms(id),
+  reason text,
+  moved_by uuid references profiles(id),
+  moved_at timestamptz not null default now()
+);
+
+create index if not exists room_move_logs_stay_id_idx on room_move_logs(stay_id);
+create index if not exists room_move_logs_moved_at_idx on room_move_logs(moved_at);
+create index if not exists stays_checkin_at_idx on stays(checkin_at, actual_check_in);
+create index if not exists stays_checkout_at_idx on stays(checkout_at, actual_check_out);
+create index if not exists reservations_checkin_checkout_idx on reservations(check_in_date, check_out_date, status);
+
+alter table room_move_logs enable row level security;
+drop policy if exists "authenticated read room move logs" on room_move_logs;
+drop policy if exists "authenticated insert room move logs" on room_move_logs;
+create policy "authenticated read room move logs" on room_move_logs for select to authenticated using (true);
+create policy "authenticated insert room move logs" on room_move_logs for insert to authenticated with check (true);
+
+-- Replace self-referencing profile policies with a security-definer helper to avoid RLS recursion.
+create or replace function public.current_user_is_super_admin()
+returns boolean
+language sql
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.profiles
+    where id = auth.uid()
+      and role = 'super_admin'
+      and is_active = true
+  );
+$$;
+
+drop policy if exists "super admin insert profiles" on profiles;
+drop policy if exists "super admin update profiles" on profiles;
+create policy "super admin insert profiles" on profiles for insert to authenticated with check (public.current_user_is_super_admin());
+create policy "super admin update profiles" on profiles for update to authenticated using (public.current_user_is_super_admin()) with check (public.current_user_is_super_admin());
