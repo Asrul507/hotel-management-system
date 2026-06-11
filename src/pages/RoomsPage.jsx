@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ROOM_STATUSES, roomsApi, roomTypesApi } from '../services/api';
+import IconButton from '../components/IconButton';
+import { faPenToSquare } from '@fortawesome/free-solid-svg-icons';
 
 const emptyForm = { room_number: '', floor: '', room_type_id: '', status: 'available', notes: '' };
 const money = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 });
@@ -75,7 +77,7 @@ export default function RoomsPage() {
       </form>
       <div className="card table-card">
         <h2>Daftar Kamar</h2>
-        {loading ? <p>Memuat kamar...</p> : <table><thead><tr><th>No</th><th>Tipe</th><th>Harga</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{rooms.map((room) => <tr key={room.id}><td>{room.room_number}</td><td>{room.room_types?.name || '-'}</td><td>{money.format(room.room_types?.base_price || 0)}</td><td><span className={`badge ${room.status}`}>{room.status}</span></td><td><button className="small" onClick={() => edit(room)}>Edit</button></td></tr>)}</tbody></table>}
+        {loading ? <p>Memuat kamar...</p> : <table><thead><tr><th>No</th><th>Tipe</th><th>Harga</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{rooms.map((room) => <tr key={room.id}><td>{room.room_number}</td><td>{room.room_types?.name || '-'}</td><td>{money.format(room.room_types?.base_price || 0)}</td><td><span className={`badge ${room.status}`}>{room.status}</span></td><td><div className="table-actions"><IconButton icon={faPenToSquare} title="Edit" onClick={() => edit(room)} /></div></td></tr>)}</tbody></table>}
       </div>
     </div>
   </div>;

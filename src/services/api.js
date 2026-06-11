@@ -4,7 +4,6 @@ import {
   FO_STATUSES,
   HK_STATUSES,
   OUT_OF_INVENTORY_HK_STATUSES,
-  READY_FOR_RESERVATION_HK_STATUSES,
   canTransitionHkStatus,
   deriveFoStatusFromHkStatus,
   isOccupiedStatus,
@@ -203,7 +202,7 @@ const roomSelect = '*, room_types(*)';
 const reservationSelect = '*, guests(*), rooms(*, room_types(*)), room_types(*)';
 const invoiceSelect = '*, invoice_items(*), payments(*)';
 const folioSelect = '*, guests(*), reservations(*, rooms(*, room_types(*)), room_types(*)), folio_items(*, rooms(*, room_types(*))), folio_payments(*)';
-const staySelect = '*, guests(*), rooms(*, room_types(*)), reservations(*), invoices(*, invoice_items(*), payments(*))';
+const staySelect = '*, guests(*), rooms(*, room_types(*)), reservations(*, guests(*), rooms(*, room_types(*)), room_types(*)), invoices(*, invoice_items(*), payments(*))';
 
 export async function logAuditEvent(action, entityType, entityId, changes = {}) {
   try {
@@ -282,7 +281,7 @@ export const roomsApi = {
   async list({ includeInactive = true, availableOnly = false, roomTypeId = '' } = {}) {
     let query = requireSupabase().from('rooms').select(roomSelect).order('room_number');
     if (!includeInactive || availableOnly) query = query.eq('is_active', true);
-    if (availableOnly) query = query.eq('fo_status', 'available').in('hk_status', READY_FOR_RESERVATION_HK_STATUSES);
+    if (availableOnly) query = query.eq('fo_status', 'available').eq('hk_status', 'VR');
     if (roomTypeId) query = query.eq('room_type_id', roomTypeId);
     const { data, error } = await query;
     raise(error);
@@ -442,7 +441,7 @@ async function validateReservation(payload, id = '') {
     raise(roomError);
     const normalized = normalizeRoom(room);
     if (!isReadyForReservation(normalized)) {
-      throw new Error('Kamar tidak ready untuk reservasi. Pastikan active, FO available, dan HK VR/VC.');
+      throw new Error('Kamar tidak ready untuk reservasi. Pastikan active, FO available, HK VR, dan tidak OOO/OOS/occupied.');
     }
     if (payload.room_type_id && normalized.room_type_id !== payload.room_type_id) throw new Error('Kamar tidak sesuai dengan room type yang dipilih.');
 
@@ -936,18 +935,31 @@ export const staysApi = {
     await logAuditEvent('check_in', 'stays', stay.id, { reservation_id: normalized.id, room_id, folio_id: folio.id });
     return normalizeStay(stay);
   },
-  async checkOut(stay) {
+  async checkOut(stay, options = {}) {
     const normalized = normalizeStay(stay);
     if (normalized.status !== 'checked_in') throw new Error('Hanya stay checked_in yang bisa check-out.');
+    const folio = normalized.folio_id ? await foliosApi.getFolio(normalized.folio_id).catch(() => null) : await foliosApi.ensureForReservation(normalized.reservations || { ...normalized, id: normalized.reservation_id }, normalized).catch(() => null);
+    const billingStatus = folio ? (folio.status === 'debt' ? 'debt' : (moneyValue(folio.balance_due) <= 0 ? 'paid' : 'unpaid')) : 'paid';
+    if (folio && moneyValue(folio.balance_due) > 0 && billingStatus !== 'debt') {
+      throw new Error('Pembayaran belum lunas. Input pembayaran atau close sebagai utang/debt terlebih dahulu.');
+    }
+    const todayDate = today();
+    const expectedCheckout = normalized.reservations?.check_out_date || normalized.reservations?.checkout_date;
+    if (expectedCheckout && todayDate < expectedCheckout && !options.earlyCheckoutApproved) {
+      throw new Error('EARLY_CHECKOUT_CONFIRM_REQUIRED');
+    }
     const now = new Date().toISOString();
+    if (normalized.reservation_id && expectedCheckout && todayDate < expectedCheckout) {
+      const { error: dateError } = await requireSupabase().from('reservations').update({ check_out_date: todayDate, checkout_date: todayDate, updated_at: now }).eq('id', normalized.reservation_id);
+      raise(dateError);
+    }
     const { data, error } = await requireSupabase().from('stays').update({ checkout_at: now, actual_check_out: now, status: 'checked_out', updated_at: now }).eq('id', normalized.id).eq('status', 'checked_in').select(staySelect).single();
     raise(error);
     if (normalized.reservation_id) await reservationsApi.updateStatus({ id: normalized.reservation_id, status: 'checked_in' }, 'checked_out');
     await roomsApi.updateHkStatus({ id: normalized.room_id, fo_status: 'available', hk_status: normalized.rooms?.hk_status || 'OC' }, 'VD', { role: 'manager', allowGroupChange: true });
-    const folio = normalized.folio_id ? await foliosApi.getFolio(normalized.folio_id).catch(() => null) : await foliosApi.ensureForReservation(normalized.reservations || { ...normalized, id: normalized.reservation_id }, normalized).catch(() => null);
-    if (folio) await foliosApi.closeFolio(folio.id).catch((err) => console.warn('Close folio saat check-out gagal:', err.message));
+    if (folio && folio.status !== 'debt') await foliosApi.closeFolio(folio.id).catch((err) => console.warn('Close folio saat check-out gagal:', err.message));
     const invoice = await upsertInvoiceForStay({ ...normalizeStay(data), invoices: normalized.invoices || [] }, true);
-    await logAuditEvent('check_out', 'stays', normalized.id, { invoice_id: invoice?.id, folio_id: folio?.id });
+    await logAuditEvent('check_out', 'stays', normalized.id, { invoice_id: invoice?.id, folio_id: folio?.id, early_checkout: expectedCheckout && todayDate < expectedCheckout });
     return normalizeStay(data);
   },
   async moveRoom(stay, newRoomId, reason = '', role = '') {
@@ -1255,5 +1267,20 @@ export const settingsApi = {
 export const dashboardApi = {
   async stats() {
     return reportsApi.summary();
+  },
+  async todayLists(date = today()) {
+    const [reservations, stays, folios] = await Promise.all([
+      reservationsApi.list({ startDate: date, endDate: date }).catch(() => []),
+      staysApi.list().catch(() => []),
+      foliosApi.list().catch(() => [])
+    ]);
+    const folioFor = (row) => folios.find((folio) => folio.id === (row.folio_id || row.reservations?.folio_id)) || null;
+    const withFolio = (row) => ({ ...row, folios: row.folios || folioFor(row) });
+    return {
+      expectedCheckins: reservations.filter((reservation) => reservation.check_in_date === date && reservation.status === 'reserved').map(withFolio),
+      expectedCheckouts: reservations.filter((reservation) => reservation.check_out_date === date && ['reserved', 'checked_in'].includes(reservation.status)).map(withFolio),
+      actualArrivals: stays.filter((stay) => String(stay.actual_check_in || stay.checkin_at || '').slice(0, 10) === date).map(withFolio),
+      actualDepartures: stays.filter((stay) => String(stay.actual_check_out || stay.checkout_at || '').slice(0, 10) === date).map(withFolio)
+    };
   }
 };

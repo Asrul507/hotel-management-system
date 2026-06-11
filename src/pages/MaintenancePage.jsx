@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { maintenanceApi, roomsApi } from '../services/api';
+import IconButton from '../components/IconButton';
+import { faCheck } from '@fortawesome/free-solid-svg-icons';
 
 export default function MaintenancePage() {
   const [reports, setReports] = useState([]);
@@ -59,7 +61,7 @@ export default function MaintenancePage() {
     {error && <div className="alert error">{error}</div>}
     <div className="two-column">
       <form className="card form-grid" onSubmit={submit}><h2>Laporan Baru</h2><label>Kamar<select required value={form.room_id} onChange={(e) => setForm({ ...form, room_id: e.target.value })}>{rooms.map((room) => <option key={room.id} value={room.id}>{room.room_number} - {room.room_types?.name}</option>)}</select></label><label className="full">Masalah<textarea required value={form.issue} onChange={(e) => setForm({ ...form, issue: e.target.value })} /></label><button disabled={saving}>{saving ? 'Menyimpan...' : 'Buat Laporan'}</button></form>
-      <div className="card table-card"><h2>Daftar Laporan</h2>{loading ? <p>Memuat maintenance...</p> : <table><thead><tr><th>Kamar</th><th>Masalah</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{reports.map((report) => <tr key={report.id}><td>{report.rooms?.room_number}</td><td>{report.issue}<br /><small>{report.fix_notes}</small></td><td><span className={`badge ${report.status}`}>{report.status}</span></td><td>{report.status !== 'done' && <button className="small" disabled={saving} onClick={() => done(report)}>Tandai Selesai</button>}</td></tr>)}</tbody></table>}</div>
+      <div className="card table-card"><h2>Daftar Laporan</h2>{loading ? <p>Memuat maintenance...</p> : <table><thead><tr><th>Kamar</th><th>Masalah</th><th>Status</th><th>Aksi</th></tr></thead><tbody>{reports.map((report) => <tr key={report.id}><td>{report.rooms?.room_number}</td><td>{report.issue}<br /><small>{report.fix_notes}</small></td><td><span className={`badge ${report.status}`}>{report.status}</span></td><td>{report.status !== 'done' && <div className="table-actions"><IconButton icon={faCheck} title="Tandai Selesai" disabled={saving} variant="primary" onClick={() => done(report)} /></div>}</td></tr>)}</tbody></table>}</div>
     </div>
   </div>;
 }
