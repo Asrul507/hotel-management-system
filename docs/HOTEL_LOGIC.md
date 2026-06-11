@@ -137,3 +137,13 @@ Kamar yang muncul di picker reservasi harus memenuhi semua syarat berikut:
 - Manager/super admin bisa set `OOO`/`OOS` dan mengembalikan kamar ke status vacant.
 - Check-in adalah proses yang mengubah vacant ke occupied (`OC`).
 - Check-out adalah proses yang mengubah occupied ke vacant dirty (`VD`).
+
+## Update UX dan Billing Status
+
+- Input reservasi utama dipindahkan ke `Folio / Billing` agar setiap reservasi terhubung ke folio/no bill.
+- Menu `Reservations` hanya untuk list, filter, detail ringkas, cancel, dan no-show.
+- Check-in/out menampilkan billing status dari folio terbaru:
+  - `paid` jika balance folio nol atau paid amount sudah menutup grand total.
+  - `partial` jika sudah ada pembayaran tetapi masih ada balance.
+  - `unpaid` jika belum ada pembayaran.
+  - `debt` jika folio ditutup sebagai debt.

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ADDITIONAL_CHARGE_TYPES, NON_CASH_METHODS, addDaysToDate, foliosApi, guestsApi, nightsBetween, reservationsApi, roomTypesApi, roomsApi, today } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import { getBillingStatus, getBillingStatusLabel } from '../utils/billingStatus';
 
 const money = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 });
 const emptyPayment = { payment_group: 'cash', payment_method: 'cash', amount: '', reference_number: '', card_or_account_number: '', notes: '' };
@@ -14,7 +15,8 @@ export default function BillingPage() {
   const [roomTypes, setRoomTypes] = useState([]);
   const [selectedId, setSelectedId] = useState('');
   const [filters, setFilters] = useState({ status: 'all', search: '' });
-  const [activeTab, setActiveTab] = useState('summary');
+  const [activeTab, setActiveTab] = useState('overview');
+  const [showNewFolio, setShowNewFolio] = useState(false);
   const [newFolio, setNewFolio] = useState({ guest_id: '', notes: '' });
   const [reservationForm, setReservationForm] = useState(emptyReservation);
   const [roomChoices, setRoomChoices] = useState([]);
@@ -39,8 +41,9 @@ export default function BillingPage() {
   const payments = (selected?.folio_payments || []).filter((item) => item.payment_type === 'payment');
   const refunds = (selected?.folio_payments || []).filter((item) => item.payment_type === 'refund');
   const canManageItems = profile?.role === 'super_admin';
+  const billingStatus = getBillingStatus(selected);
 
-  const load = async () => {
+  const load = async (preferredSelectedId = '') => {
     setLoading(true);
     setError('');
     try {
@@ -52,7 +55,8 @@ export default function BillingPage() {
       setFolios(folioData);
       setGuests(guestData);
       setRoomTypes(typeData);
-      const nextSelected = selectedId && folioData.some((folio) => folio.id === selectedId) ? selectedId : folioData[0]?.id || '';
+      const targetSelectedId = preferredSelectedId || selectedId;
+      const nextSelected = targetSelectedId && folioData.some((folio) => folio.id === targetSelectedId) ? targetSelectedId : folioData[0]?.id || '';
       setSelectedId(nextSelected);
       const current = folioData.find((folio) => folio.id === nextSelected) || folioData[0];
       if (current) {
@@ -108,9 +112,9 @@ export default function BillingPage() {
     setError('');
     setSuccess('');
     try {
-      await action();
+      const result = await action();
       if (doneMessage) setSuccess(doneMessage);
-      await load();
+      await load(result?.selectedId || '');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -191,10 +195,10 @@ export default function BillingPage() {
   }
 
   const actionButtons = useMemo(() => [
+    ['overview', 'Overview'],
     ['reservations', 'Add Reservation'],
     ['charges', 'Add Charge'],
     ['payments', 'Add Payment'],
-    ['summary', 'Apply Discount'],
     ['refund', 'Refund / Debt']
   ], []);
 
@@ -204,27 +208,31 @@ export default function BillingPage() {
     {success && <div className="alert success">{success}</div>}
     <div className="two-column wide-left">
       <div className="page-stack">
-        <form className="card form-grid" onSubmit={(e) => { e.preventDefault(); run('new-folio', async () => {
+        <div className="card action-card"><div className="action-bar"><div><h2>Folio</h2><p className="muted">Pilih folio atau buat nomor bill baru.</p></div><button className="small" onClick={() => setShowNewFolio((value) => !value)}>+ Tambah Folio Baru</button></div></div>
+        {showNewFolio && <form className="card form-grid" onSubmit={(e) => { e.preventDefault(); run('new-folio', async () => {
           const folio = await foliosApi.createFolio(newFolio);
           setSelectedId(folio.id);
+          setActiveTab('overview');
+          setShowNewFolio(false);
           setNewFolio({ guest_id: '', notes: '' });
+          return { selectedId: folio.id };
         }, 'Folio baru berhasil dibuat.'); }}>
           <h2>Buat Folio Baru</h2>
           <label className="full">Guest<select required value={newFolio.guest_id} onChange={(e) => setNewFolio({ ...newFolio, guest_id: e.target.value })}><option value="">Pilih tamu</option>{guests.map((guest) => <option key={guest.id} value={guest.id}>{guest.full_name}{guest.phone ? ` - ${guest.phone}` : ''}</option>)}</select></label>
           <label className="full">Notes<textarea value={newFolio.notes} onChange={(e) => setNewFolio({ ...newFolio, notes: e.target.value })} /></label>
-          <button disabled={saving === 'new-folio'}>{saving === 'new-folio' ? 'Membuat...' : 'New Folio'}</button>
-        </form>
+          <div className="button-row"><button disabled={saving === 'new-folio'}>{saving === 'new-folio' ? 'Membuat...' : 'Simpan Folio'}</button><button type="button" className="secondary" onClick={() => setShowNewFolio(false)}>Batal</button></div>
+        </form>}
         <form className="card filter-grid" onSubmit={(e) => { e.preventDefault(); load(); }}><input placeholder="Cari folio / tamu" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} /><select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}><option value="all">Semua status</option><option value="open">Open</option><option value="closed">Closed</option><option value="debt">Debt</option><option value="cancelled">Cancelled</option><option value="refunded">Refunded</option></select><button>Filter</button></form>
-        <div className="card table-card"><h2>Daftar Folio</h2>{loading ? <p>Memuat folio...</p> : folios.length === 0 ? <p className="muted">Belum ada folio. Klik New Folio untuk mulai.</p> : <table><thead><tr><th>Folio</th><th>Tamu</th><th>Grand Total</th><th>Balance</th><th>Status</th></tr></thead><tbody>{folios.map((folio) => <tr key={folio.id} className={selected?.id === folio.id ? 'selected-row' : ''} onClick={() => setSelectedId(folio.id)}><td>{folio.folio_number}</td><td>{folio.guests?.full_name || '-'}</td><td>{money.format(folio.grand_total || 0)}</td><td>{money.format(folio.balance_due || 0)}</td><td><span className={`badge ${folio.status}`}>{folio.status}</span></td></tr>)}</tbody></table>}</div>
+        <div className="card table-card"><h2>Daftar Folio</h2>{loading ? <p>Memuat folio...</p> : folios.length === 0 ? <p className="muted">Belum ada folio. Klik Tambah Folio Baru untuk mulai.</p> : <table><thead><tr><th>Folio</th><th>Tamu</th><th>Grand Total</th><th>Balance</th><th>Status</th></tr></thead><tbody>{folios.map((folio) => <tr key={folio.id} className={selected?.id === folio.id ? 'selected-row' : ''} onClick={() => setSelectedId(folio.id)}><td>{folio.folio_number}</td><td>{folio.guests?.full_name || '-'}</td><td>{money.format(folio.grand_total || 0)}</td><td>{money.format(folio.balance_due || 0)}</td><td><span className={`badge ${folio.status}`}>{folio.status}</span></td></tr>)}</tbody></table>}</div>
       </div>
 
       {selected ? <div className="page-stack">
         <div className="card detail-list">
           <div className="page-header"><div><h2>{selected.folio_number} - {selected.guests?.full_name || selectedGuest?.full_name || '-'}</h2><p><span className={`badge ${selected.status}`}>{selected.status}</span></p></div><button className="small" disabled={saving === 'close'} onClick={() => run('close', () => foliosApi.closeFolio(selected.id), selected.balance_due > 0 ? 'Folio ditutup sebagai debt.' : 'Folio ditutup.')}>{selected.balance_due > 0 ? 'Close / Mark Debt' : 'Close Folio'}</button></div>
-          <div className="button-row">{actionButtons.map(([tab, label]) => <button key={tab} className={activeTab === tab ? 'small' : 'small secondary'} onClick={() => setActiveTab(tab)}>{label}</button>)}</div>
+          <div className="button-row">{actionButtons.map(([tab, label]) => <button key={`${tab}-${label}`} className={activeTab === tab ? 'small' : 'small secondary'} onClick={() => setActiveTab(tab)}>{label}</button>)}</div>
         </div>
 
-        {activeTab === 'summary' && <div className="card detail-list"><h2>Summary</h2><div className="grid"><p><strong>Subtotal</strong><br />{money.format(selected.subtotal || 0)}</p><p><strong>Discount</strong><br />{selected.discount_percent || 0}% / {money.format(selected.discount_amount || 0)}</p><p><strong>Tax</strong><br />{money.format(selected.tax_amount || 0)}</p><p><strong>Service</strong><br />{money.format(selected.service_amount || 0)}</p><p><strong>Grand Total</strong><br />{money.format(selected.grand_total || 0)}</p><p><strong>Paid</strong><br />{money.format(selected.paid_amount || 0)}</p><p><strong>Refund</strong><br />{money.format(selected.refund_amount || 0)}</p><p><strong>Balance</strong><br />{money.format(selected.balance_due || 0)}</p></div><form className="inline-form" onSubmit={(e) => { e.preventDefault(); run('discount', () => foliosApi.updateDiscount(selected.id, discount, profile?.role), 'Discount folio tersimpan.'); }}><label>Discount %<input type="number" min="0" max="100" value={discount} onChange={(e) => setDiscount(e.target.value)} /></label><button disabled={saving === 'discount'}>Apply Discount</button></form></div>}
+        {activeTab === 'overview' && <div className="card detail-list"><h2>Overview</h2><div className="grid"><p><strong>Folio</strong><br />{selected.folio_number}</p><p><strong>Guest</strong><br />{selected.guests?.full_name || '-'}</p><p><strong>Status Folio</strong><br /><span className={`badge ${selected.status}`}>{selected.status}</span></p><p><strong>Billing Status</strong><br /><span className={`badge ${billingStatus}`}>{getBillingStatusLabel(selected)}</span></p><p><strong>Subtotal</strong><br />{money.format(selected.subtotal || 0)}</p><p><strong>Discount</strong><br />{selected.discount_percent || 0}% / {money.format(selected.discount_amount || 0)}</p><p><strong>Tax / Service</strong><br />{money.format(selected.tax_amount || 0)} / {money.format(selected.service_amount || 0)}</p><p><strong>Grand Total</strong><br />{money.format(selected.grand_total || 0)}</p><p><strong>Paid</strong><br />{money.format(selected.paid_amount || 0)}</p><p><strong>Refund</strong><br />{money.format(selected.refund_amount || 0)}</p><p><strong>Balance</strong><br />{money.format(selected.balance_due || 0)}</p></div><div className="action-bar"><div className="action-group"><button className="icon-button" title="Add Reservation" onClick={() => setActiveTab('reservations')}>＋ Reservasi</button><button className="icon-button" title="Add Charge" onClick={() => setActiveTab('charges')}>＋ Charge</button><button className="icon-button" title="Add Payment" onClick={() => setActiveTab('payments')}>💳 Payment</button><button className="icon-button" title="Refund" onClick={() => setActiveTab('refund')}>↩ Refund</button></div></div><form className="inline-form" onSubmit={(e) => { e.preventDefault(); run('discount', () => foliosApi.updateDiscount(selected.id, discount, profile?.role), 'Discount folio tersimpan.'); }}><label>Discount %<input type="number" min="0" max="100" value={discount} onChange={(e) => setDiscount(e.target.value)} /></label><button disabled={saving === 'discount'}>Apply Discount</button></form></div>}
 
         {activeTab === 'reservations' && <div className="page-stack"><form className="card form-grid" onSubmit={(e) => { e.preventDefault(); run('reservation', async () => {
           const payload = { ...reservationForm, guest_id: selected.guest_id, folio_id: selected.id, room_rate: reservationForm.room_rate === '' ? 0 : Number(reservationForm.room_rate), deposit_amount: reservationForm.deposit_amount === '' ? 0 : Number(reservationForm.deposit_amount) };

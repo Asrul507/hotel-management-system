@@ -169,3 +169,31 @@ alter table folio_items add column if not exists void_reason text;
 alter table folio_items add column if not exists voided_by uuid references profiles(id);
 alter table folio_items add column if not exists voided_at timestamptz;
 ```
+
+## Update UX Folio Overview
+
+Menu `Folio / Billing` sekarang membuka workspace dengan daftar folio dan detail folio terpilih. Form **Buat Folio Baru** tidak lagi tampil terus menerus:
+
+1. Klik **Tambah Folio Baru** untuk membuka form.
+2. Pilih guest dan simpan.
+3. Setelah berhasil, form otomatis tertutup.
+4. Folio baru otomatis terpilih.
+5. Tab **Overview** langsung menampilkan ringkasan folio baru.
+
+Overview menampilkan folio number, guest, status folio, billing status, subtotal, discount, tax/service, grand total, paid, refund, balance, serta quick actions untuk Add Reservation, Add Charge, Payment, Refund, dan Discount.
+
+## Reservations list-only
+
+Menu `Reservations` sekarang diposisikan sebagai halaman monitoring/list dan filter. Reservasi baru dibuat dari `Folio / Billing` agar otomatis terhubung ke folio/no bill. Tombol dari halaman Reservations diarahkan ke menu Folio.
+
+## Billing status
+
+Billing status memakai helper `getBillingStatus(folio)`:
+
+- `debt` jika folio status `debt`.
+- `refunded` jika folio status `refunded`.
+- `paid` jika `balance_due <= 0` atau `paid_amount >= grand_total`.
+- `partial` jika `paid_amount > 0` dan `balance_due > 0`.
+- `unpaid` jika belum ada pembayaran.
+
+Check-in / Check-out mengambil status folio terbaru, bukan invoice legacy, sehingga folio lunas tampil `PAID`.

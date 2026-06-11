@@ -141,7 +141,8 @@ function normalizeStay(stay) {
     actual_check_in: stay.actual_check_in || stay.checkin_at,
     actual_check_out: stay.actual_check_out || stay.checkout_at,
     rooms: normalizeRoom(stay.rooms),
-    reservations: normalizeReservation(stay.reservations)
+    reservations: normalizeReservation(stay.reservations),
+    folios: normalizeFolio(stay.folios || stay.reservations?.folios)
   };
 }
 

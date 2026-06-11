@@ -105,3 +105,11 @@ Aplikasi sudah memiliki auth, routing, Supabase client yang aman berbasis enviro
 - Add Charge sekarang memakai payload sanitizer/validator khusus folio item dan tidak pernah mengirim `line_total`, karena `line_total` adalah generated column.
 - Error Supabase sekarang dicatat ke console untuk developer dan pesan UI dibedakan untuk constraint `23514`, RLS `42501`, not-null `23502`, serta generated column.
 - Edit dan Hapus transaksi folio item sekarang hanya tersedia untuk `super_admin`; hapus memakai soft void agar audit hotel tetap aman.
+
+## Follow-up Audit UX Folio/Reservation/Check-in
+
+- Folio workspace sekarang punya tab Overview dan form folio baru hanya muncul saat tombol Tambah Folio Baru ditekan.
+- Setelah folio baru dibuat, form tertutup, folio baru terpilih, dan overview langsung tampil.
+- Menu Reservations diubah menjadi list/filter only supaya input reservasi tetap lewat Folio dan otomatis membawa folio/no bill.
+- Check-in/out sebelumnya dapat terlihat unpaid karena membaca billing legacy invoice dari `calculateStayBilling`; sekarang halaman memakai status folio terbaru via helper billing status.
+- CSS action button dan responsive layout diperkuat dengan action bar, icon button, table actions, flex-wrap, dan media query untuk desktop/tablet/mobile.

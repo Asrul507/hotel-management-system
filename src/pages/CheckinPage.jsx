@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { calculateStayBilling, reservationsApi, roomsApi, staysApi } from '../services/api';
+import { calculateStayBilling, foliosApi, reservationsApi, roomsApi, staysApi } from '../services/api';
+import { getBillingStatus, getBillingStatusLabel } from '../utils/billingStatus';
 
 const money = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 });
 
@@ -16,9 +17,13 @@ export default function CheckinPage() {
     setLoading(true);
     setError('');
     try {
-      const [arrivalData, stayData] = await Promise.all([reservationsApi.arrivals(), staysApi.active()]);
+      const [arrivalData, stayData, folioData] = await Promise.all([reservationsApi.arrivals(), staysApi.active(), foliosApi.list().catch(() => [])]);
+      const staysWithFolios = stayData.map((stay) => ({
+        ...stay,
+        folios: folioData.find((folio) => folio.id === (stay.folio_id || stay.reservations?.folio_id)) || stay.folios
+      }));
       setArrivals(arrivalData);
-      setActiveStays(stayData);
+      setActiveStays(staysWithFolios);
       const choices = {};
       await Promise.all(arrivalData.map(async (reservation) => {
         choices[reservation.id] = await roomsApi.availableForStay({ check_in_date: reservation.check_in_date, check_out_date: reservation.check_out_date, room_type_id: reservation.room_type_id, exclude_reservation_id: reservation.id });
@@ -57,8 +62,11 @@ export default function CheckinPage() {
         return <tr key={reservation.id}><td>{reservation.guests?.full_name}{reservation.guests?.is_blacklisted && <><br /><span className="badge cancelled">Blacklist</span></>}</td><td>{reservation.room_id ? reservation.rooms?.room_number : <select required value={selected} onChange={(e) => setSelectedRooms({ ...selectedRooms, [reservation.id]: e.target.value })}><option value="">Pilih kamar</option>{choices.map((room) => <option key={room.id} value={room.id}>{room.room_number} - {room.hk_status}</option>)}</select>}<br /><small>{reservation.room_types?.name}</small></td><td>{reservation.reservation_code}<br /><small>{reservation.check_in_date} → {reservation.check_out_date}</small></td><td>{reservation.guests?.is_blacklisted ? 'Perlu approval manager.' : choices.length === 0 && !reservation.room_id ? 'Tidak ada kamar eligible.' : '-'}</td><td><button className="small" disabled={processing === reservation.id || !selected} onClick={() => run(reservation.id, () => staysApi.checkIn(reservation, selected), `Check-in ${reservation.guests?.full_name}?`)}>Check-in</button></td></tr>;
       })}</tbody></table>}</div>
       <div className="card table-card"><h2>Tamu In-house</h2>{loading ? <p>Memuat stay...</p> : activeStays.length === 0 ? <p className="muted">Belum ada tamu in-house.</p> : <table><thead><tr><th>Tamu</th><th>Kamar</th><th>Check-in</th><th>Expected Out</th><th>Billing</th><th>Aksi</th></tr></thead><tbody>{activeStays.map((stay) => {
-        const billing = calculateStayBilling(stay);
-        return <tr key={stay.id}><td>{stay.guests?.full_name}</td><td>{stay.rooms?.room_number}<br /><small>{stay.rooms?.hk_status}</small></td><td>{stay.checkin_at?.slice(0, 16).replace('T', ' ')}</td><td>{stay.reservations?.check_out_date || '-'}</td><td><span className={`badge ${billing.paymentStatus}`}>{billing.paymentStatus}</span><br /><small>{money.format(billing.balance)} due</small></td><td><button className="small" disabled={processing === stay.id} onClick={() => run(stay.id, () => staysApi.checkOut(stay), `Check-out ${stay.guests?.full_name}? Invoice akan dibuat jika belum ada.`)}>Check-out</button></td></tr>;
+        const legacyBilling = calculateStayBilling(stay);
+        const folio = stay.folios || stay.reservations?.folios;
+        const billingStatus = folio ? getBillingStatus(folio) : legacyBilling.paymentStatus;
+        const balanceDue = folio ? Number(folio.balance_due || 0) : legacyBilling.balance;
+        return <tr key={stay.id}><td>{stay.guests?.full_name}</td><td>{stay.rooms?.room_number}<br /><small>{stay.rooms?.hk_status}</small></td><td>{stay.checkin_at?.slice(0, 16).replace('T', ' ')}</td><td>{stay.reservations?.check_out_date || '-'}</td><td><span className={`badge ${billingStatus}`}>{folio ? getBillingStatusLabel(folio) : billingStatus.toUpperCase()}</span><br /><small>{folio?.folio_number ? `${folio.folio_number} · ` : ''}{money.format(balanceDue)} due</small></td><td><button className="small" disabled={processing === stay.id} onClick={() => run(stay.id, () => staysApi.checkOut(stay), `Check-out ${stay.guests?.full_name}? Folio akan ditutup jika belum closed.`)}>Check-out</button></td></tr>;
       })}</tbody></table>}</div>
     </div>
   </div>;
