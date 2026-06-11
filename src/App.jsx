@@ -13,6 +13,7 @@ import HousekeepingPage from './pages/HousekeepingPage';
 import MaintenancePage from './pages/MaintenancePage';
 import ReportsPage from './pages/ReportsPage';
 import SettingsPage from './pages/SettingsPage';
+import UserManagementPage from './pages/UserManagementPage';
 import UnauthorizedPage from './pages/UnauthorizedPage';
 import { useAuth } from './contexts/AuthContext';
 import { ROLES, canAccess, roleAccess } from './utils/roles';
@@ -48,6 +49,7 @@ export default function App() {
       <Route path="/housekeeping" element={allowed('housekeeping', <HousekeepingPage />)} />
       <Route path="/maintenance" element={allowed('maintenance', <MaintenancePage />)} />
       <Route path="/reports" element={allowed('reports', <ReportsPage />)} />
+      <Route path="/users" element={allowed('users', <UserManagementPage />)} />
       <Route path="/settings" element={allowed('settings', <SettingsPage />)} />
     </Route>
     <Route path="*" element={<Navigate to="/" replace />} />
