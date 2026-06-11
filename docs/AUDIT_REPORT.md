@@ -90,3 +90,11 @@ Aplikasi sudah memiliki auth, routing, Supabase client yang aman berbasis enviro
 - Test folio: tambah charge, discount persen, payment cash, payment non tunai dengan reference, refund, close sebagai debt.
 - Test housekeeping bulk update VD ke VC.
 - Jalankan `npm run build` dan pastikan berhasil.
+
+## Follow-up Audit v0.3.0-folio
+
+- Penyebab error reservasi `cannot insert a non-DEFAULT value into column nights`: service reservation sebelumnya mengirim `nights` pada insert/update, sementara beberapa schema Supabase memakai `reservations.nights` sebagai generated column. Payload sekarang disanitasi agar `nights` tidak pernah dikirim ke DB.
+- Penyebab kamar ready tidak muncul: filter room picker belum terpusat pada definisi ready operasional hotel. Sekarang room picker memakai helper status kamar dan hanya menampilkan kamar active, FO available, HK `VR`/`VC`, tanpa overlap reservation/stay.
+- Logika FO/HK dipusatkan di `src/utils/roomStatus.js` agar Housekeeping, Master Settings, API room update, reservation picker, dan check-in/check-out memakai aturan yang sama.
+- Billing/Folio diperjelas menjadi Folio Workspace dengan tab Summary, Reservations, Charges, Payments, dan Refund/Debt.
+- SQL idempotent ditambahkan untuk `reservations.folio_id`, index folio/reservation/room lookup, RLS folio/audit, dan item type additional charge.
