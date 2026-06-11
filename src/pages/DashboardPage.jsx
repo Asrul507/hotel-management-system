@@ -30,6 +30,6 @@ export default function DashboardPage() {
     <div className="page-header"><div><h1>Dashboard</h1><p>Angka operasional memakai FO/HK status, reservasi, stays, invoice, dan payment.</p></div></div>
     {error && <div className="alert error">{error}</div>}
     {loading ? <div className="card">Memuat dashboard...</div> : <div className="grid">{cards.map(([key, value]) => <div className="card" key={key}><h3>{key}</h3><p>{value}</p></div>)}</div>}
-    <div className="card"><h2>Quick Link Operasional</h2><div className="button-row"><Link className="button-link" to="/reservations">Buat Reservasi</Link><Link className="button-link" to="/checkin">Check-in/out</Link><Link className="button-link" to="/housekeeping">Housekeeping</Link><Link className="button-link" to="/billing">Billing</Link></div></div>
+    <div className="card"><h2>Quick Link Operasional</h2><div className="button-row"><Link className="button-link" to="/billing">Buat Reservasi</Link><Link className="button-link" to="/checkin">Check-in/out</Link><Link className="button-link" to="/housekeeping">Housekeeping</Link><Link className="button-link" to="/billing">Billing</Link></div></div>
   </div>;
 }

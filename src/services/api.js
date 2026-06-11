@@ -1,7 +1,17 @@
 import { requireSupabase } from '../config/supabase';
+import {
+  FO_STATUSES,
+  HK_STATUSES,
+  OUT_OF_INVENTORY_HK_STATUSES,
+  READY_FOR_RESERVATION_HK_STATUSES,
+  canTransitionHkStatus,
+  deriveFoStatusFromHkStatus,
+  isOccupiedStatus,
+  isOutOfInventoryStatus,
+  isReadyForReservation
+} from '../utils/roomStatus';
 
-export const FO_STATUSES = ['available', 'unavailable'];
-export const HK_STATUSES = ['VR', 'VC', 'VD', 'OR', 'OC', 'OD', 'OOO', 'OOS', 'DND', 'SLEEP OUT', 'ONL'];
+export { FO_STATUSES, HK_STATUSES };
 export const ROOM_STATUSES = ['available', 'unavailable', ...HK_STATUSES];
 export const RESERVATION_STATUSES = ['reserved', 'checked_in', 'checked_out', 'cancelled', 'no_show'];
 export const INVOICE_STATUSES = ['unpaid', 'partial', 'paid', 'refunded'];
@@ -9,15 +19,25 @@ export const PAYMENT_GROUPS = ['cash', 'non_tunai'];
 export const NON_CASH_METHODS = ['qris', 'transfer', 'debit_card', 'credit_card', 'e_wallet', 'other'];
 export const PAYMENT_METHODS = ['cash', ...NON_CASH_METHODS];
 export const FOLIO_STATUSES = ['open', 'closed', 'cancelled', 'debt', 'refunded', 'partial_refund'];
-export const FOLIO_ITEM_TYPES = ['room', 'restaurant', 'laundry', 'minibar', 'other', 'discount', 'cancellation_fee', 'refund', 'adjustment'];
+export const FOLIO_ITEM_TYPES = ['room', 'extra_bed', 'breakfast', 'early_checkin', 'late_checkout', 'restaurant', 'laundry', 'minibar', 'other', 'discount', 'cancellation_fee', 'no_show_fee', 'refund', 'adjustment'];
+export const ADDITIONAL_CHARGE_TYPES = [
+  ['extra_bed', 'Extra Bed'],
+  ['breakfast', 'Breakfast'],
+  ['early_checkin', 'Early Check In'],
+  ['late_checkout', 'Late Check Out'],
+  ['laundry', 'Laundry'],
+  ['restaurant', 'Restaurant'],
+  ['minibar', 'Minibar'],
+  ['other', 'Other']
+];
 
 export const today = () => new Date().toISOString().slice(0, 10);
 const reservationCode = () => `RSV-${Date.now()}`;
 const invoiceNumber = (prefix = 'INV') => `${prefix || 'INV'}-${Date.now()}`;
 const folioNumber = () => `FOL-${Date.now()}`;
 const moneyValue = (value) => Number(value || 0);
-export const isOutOfInventoryHk = (status) => ['OOO', 'OOS'].includes(status);
-export const isOccupiedHk = (status) => ['OR', 'OC', 'OD', 'DND', 'SLEEP OUT'].includes(status);
+export const isOutOfInventoryHk = isOutOfInventoryStatus;
+export const isOccupiedHk = isOccupiedStatus;
 
 function raise(error) {
   if (error) throw new Error(error.message || 'Terjadi kesalahan saat mengambil data Supabase.');
@@ -25,9 +45,15 @@ function raise(error) {
 
 function parsePgError(error, fallback) {
   if (!error) return fallback;
-  if (error.code === '23505') return 'Data sudah ada. Periksa nomor kamar, kode, NIK, atau nomor reservasi yang harus unique.';
-  if (error.code === '23514') return 'Data tidak memenuhi validasi database. Periksa status, tanggal, dan nominal.';
-  return error.message || fallback;
+  console.warn('Supabase error detail:', error);
+  const detail = [error.message, error.details, error.hint].filter(Boolean).join(' ');
+  const lowerDetail = detail.toLowerCase();
+  if (error.code === '23505') return 'Data sudah ada. Periksa nomor kamar, kode, NIK, folio, atau nomor reservasi yang harus unique.';
+  if (error.code === '23514') return `${fallback} Constraint database gagal. Periksa item_type, status, tanggal, qty, dan unit price. Detail: ${detail || 'check constraint violation.'}`;
+  if (error.code === '23502') return `${fallback} Field wajib belum lengkap. Detail: ${detail || 'not-null violation.'}`;
+  if (error.code === '42501') return `${fallback} Akses database ditolak oleh RLS/policy. Jalankan migration RLS terbaru atau cek role user.`;
+  if (lowerDetail.includes('generated') || lowerDetail.includes('line_total')) return `${fallback} Jangan kirim kolom generated seperti line_total dari frontend.`;
+  return detail || fallback;
 }
 
 export function nightsBetween(startDate, endDate) {
@@ -115,14 +141,15 @@ function normalizeStay(stay) {
     actual_check_in: stay.actual_check_in || stay.checkin_at,
     actual_check_out: stay.actual_check_out || stay.checkout_at,
     rooms: normalizeRoom(stay.rooms),
-    reservations: normalizeReservation(stay.reservations)
+    reservations: normalizeReservation(stay.reservations),
+    folios: normalizeFolio(stay.folios || stay.reservations?.folios)
   };
 }
 
 function normalizeRoomPayload(payload) {
   const hkStatus = payload.hk_status || 'VC';
   if (!HK_STATUSES.includes(hkStatus)) throw new Error('Status HK tidak valid.');
-  const foStatus = isOutOfInventoryHk(hkStatus) ? 'unavailable' : (payload.fo_status || 'available');
+  const foStatus = deriveFoStatusFromHkStatus(hkStatus, payload.fo_status || 'available');
   if (!FO_STATUSES.includes(foStatus)) throw new Error('Status FO tidak valid.');
 
   return {
@@ -174,7 +201,7 @@ function normalizeGuestPayload(payload) {
 const roomSelect = '*, room_types(*)';
 const reservationSelect = '*, guests(*), rooms(*, room_types(*)), room_types(*)';
 const invoiceSelect = '*, invoice_items(*), payments(*)';
-const folioSelect = '*, guests(*), folio_items(*, rooms(*, room_types(*))), folio_payments(*)';
+const folioSelect = '*, guests(*), reservations(*, rooms(*, room_types(*)), room_types(*)), folio_items(*, rooms(*, room_types(*))), folio_payments(*)';
 const staySelect = '*, guests(*), rooms(*, room_types(*)), reservations(*), invoices(*, invoice_items(*), payments(*))';
 
 export async function logAuditEvent(action, entityType, entityId, changes = {}) {
@@ -254,7 +281,7 @@ export const roomsApi = {
   async list({ includeInactive = true, availableOnly = false, roomTypeId = '' } = {}) {
     let query = requireSupabase().from('rooms').select(roomSelect).order('room_number');
     if (!includeInactive || availableOnly) query = query.eq('is_active', true);
-    if (availableOnly) query = query.eq('fo_status', 'available').not('hk_status', 'in', '(OOO,OOS)');
+    if (availableOnly) query = query.eq('fo_status', 'available').in('hk_status', READY_FOR_RESERVATION_HK_STATUSES);
     if (roomTypeId) query = query.eq('room_type_id', roomTypeId);
     const { data, error } = await query;
     raise(error);
@@ -262,7 +289,7 @@ export const roomsApi = {
   },
   async availableForStay({ check_in_date, check_out_date, room_type_id = '', exclude_reservation_id = '' }) {
     const rooms = (await this.list({ availableOnly: true, roomTypeId: room_type_id }))
-      .filter((room) => ['VR', 'VC'].includes(room.hk_status));
+      .filter(isReadyForReservation);
     if (!check_in_date || !check_out_date || check_out_date <= check_in_date) return rooms;
     const [activeReservations, activeStays] = await Promise.all([
       reservationsApi.list().catch(() => []),
@@ -275,12 +302,7 @@ export const roomsApi = {
         if (!['reserved', 'checked_in'].includes(reservation.status)) return false;
         return datesOverlap(reservation.check_in_date, reservation.check_out_date, check_in_date, check_out_date);
       });
-      const stayConflict = activeStays.some((stay) => {
-        if (stay.room_id !== room.id || stay.status !== 'checked_in') return false;
-        const stayIn = stay.reservations?.check_in_date || stay.checkin_at?.slice(0, 10) || today();
-        const stayOut = stay.reservations?.check_out_date || stay.checkout_at?.slice(0, 10) || check_out_date;
-        return datesOverlap(stayIn, stayOut, check_in_date, check_out_date);
-      });
+      const stayConflict = activeStays.some((stay) => stay.room_id === room.id && stay.status === 'checked_in');
       return !reservationConflict && !stayConflict;
     });
   },
@@ -309,15 +331,21 @@ export const roomsApi = {
     await logAuditEvent('update_room_fo_status', 'rooms', id, { fo_status });
     return normalizeRoom(data);
   },
-  async updateHkStatus(room, hk_status, { role, notes = '', fo_status } = {}) {
+  async updateHkStatus(room, hk_status, { role, notes = '', fo_status, allowGroupChange = false, hasCheckedInStay = false } = {}) {
     if (!HK_STATUSES.includes(hk_status)) throw new Error('Status HK tidak valid.');
     const normalized = normalizeRoom(room);
     const privileged = ['super_admin', 'manager'].includes(role);
-    if (role === 'cashier') throw new Error('Cashier tidak boleh mengubah status kamar.');
-    if (normalized.fo_status === 'unavailable' && !privileged) throw new Error('Housekeeping hanya boleh mengubah HK status pada kamar FO available.');
-    if (['OOO', 'OOS'].includes(hk_status) && !privileged) throw new Error('OOO/OOS hanya boleh diset manager atau super admin.');
-    if (['OOO', 'OOS'].includes(hk_status) && !notes?.trim()) throw new Error('Catatan wajib diisi untuk status OOO/OOS.');
-    const nextFo = isOutOfInventoryHk(hk_status) ? 'unavailable' : (privileged && fo_status ? fo_status : normalized.fo_status);
+    if (['cashier', 'receptionist'].includes(role)) throw new Error('Role ini tidak boleh mengubah status kamar manual.');
+    if (!canTransitionHkStatus(normalized, hk_status, role, { allowGroupChange, hasCheckedInStay })) {
+      throw new Error('Transisi HK status tidak valid. Perubahan vacant ↔ occupied harus lewat check-in/check-out.');
+    }
+    if (OUT_OF_INVENTORY_HK_STATUSES.includes(hk_status) && !privileged) throw new Error('OOO/OOS hanya boleh diset manager atau super admin.');
+    if (OUT_OF_INVENTORY_HK_STATUSES.includes(hk_status) && !notes?.trim()) throw new Error('Catatan wajib diisi untuk status OOO/OOS.');
+    if (isOccupiedStatus(hk_status) && isOutOfInventoryStatus(normalized.hk_status) && !hasCheckedInStay && !allowGroupChange) {
+      throw new Error('Kembali dari OOO/OOS ke status occupied hanya boleh jika ada stay checked-in.');
+    }
+    const derivedFo = deriveFoStatusFromHkStatus(hk_status, normalized.fo_status);
+    const nextFo = privileged && fo_status && !isOutOfInventoryStatus(hk_status) ? fo_status : derivedFo;
     const body = { hk_status, fo_status: nextFo, status: nextFo, updated_at: new Date().toISOString() };
     if (notes) body.notes = notes;
     const { data, error } = await requireSupabase().from('rooms').update(body).eq('id', normalized.id).select(roomSelect).single();
@@ -385,19 +413,25 @@ async function validateReservation(payload, id = '') {
     const { data: room, error: roomError } = await requireSupabase().from('rooms').select(roomSelect).eq('id', payload.room_id).single();
     raise(roomError);
     const normalized = normalizeRoom(room);
-    if (normalized.is_active === false || normalized.fo_status !== 'available' || isOutOfInventoryHk(normalized.hk_status)) {
-      throw new Error('Kamar tidak tersedia karena inactive, FO unavailable, atau OOO/OOS.');
+    if (!isReadyForReservation(normalized)) {
+      throw new Error('Kamar tidak ready untuk reservasi. Pastikan active, FO available, dan HK VR/VC.');
     }
     if (payload.room_type_id && normalized.room_type_id !== payload.room_type_id) throw new Error('Kamar tidak sesuai dengan room type yang dipilih.');
-    if (!['VR', 'VC'].includes(normalized.hk_status)) throw new Error('Hanya kamar ready (VR/VC) yang boleh dipilih untuk reservasi/check-in.');
+
     const { data, error } = await requireSupabase().from('reservations').select('id,reservation_code,reservation_number,check_in_date,check_out_date,status').eq('room_id', payload.room_id).in('status', ['reserved', 'checked_in']);
     raise(error);
     const conflict = (data || []).find((reservation) => reservation.id !== id && datesOverlap(reservation.check_in_date, reservation.check_out_date, payload.check_in_date, payload.check_out_date));
     if (conflict) throw new Error(`Double booking ditolak. Kamar sudah dipakai oleh ${conflict.reservation_code || conflict.reservation_number}.`);
     const activeStays = await staysApi.active().catch(() => []);
-    const stayConflict = activeStays.find((stay) => stay.room_id === payload.room_id && datesOverlap(stay.reservations?.check_in_date || stay.checkin_at?.slice(0, 10) || today(), stay.reservations?.check_out_date || payload.check_out_date, payload.check_in_date, payload.check_out_date));
+    const stayConflict = activeStays.find((stay) => stay.room_id === payload.room_id && stay.status === 'checked_in');
     if (stayConflict) throw new Error('Kamar sedang in-house dan tidak boleh dipilih.');
   }
+}
+
+export function sanitizeReservationPayload(payload) {
+  const { nights, ...safePayload } = payload;
+  Object.keys(safePayload).forEach((key) => safePayload[key] === undefined && delete safePayload[key]);
+  return safePayload;
 }
 
 export const reservationsApi = {
@@ -424,16 +458,17 @@ export const reservationsApi = {
   async create(payload) {
     const reservationPayload = await this.buildPayload(payload);
     await validateReservation(reservationPayload);
-    const { data, error } = await requireSupabase().from('reservations').insert(reservationPayload).select(reservationSelect).single();
+    const { data, error } = await requireSupabase().from('reservations').insert(sanitizeReservationPayload(reservationPayload)).select(reservationSelect).single();
     if (error) throw new Error(parsePgError(error, 'Gagal membuat reservasi.'));
+    if (data.folio_id) await foliosApi.addRoomChargeOnce(data.folio_id, normalizeReservation(data)).catch((err) => console.warn('Room charge folio belum dibuat:', err.message));
     await logAuditEvent('create_reservation', 'reservations', data.id, reservationPayload);
     return normalizeReservation(data);
   },
   async update(id, payload) {
     const reservationPayload = await this.buildPayload(payload, id);
-    Object.keys(reservationPayload).forEach((key) => reservationPayload[key] === undefined && delete reservationPayload[key]);
-    await validateReservation(reservationPayload, id);
-    const { data, error } = await requireSupabase().from('reservations').update({ ...reservationPayload, updated_at: new Date().toISOString() }).eq('id', id).select(reservationSelect).single();
+    const safePayload = sanitizeReservationPayload(reservationPayload);
+    await validateReservation(safePayload, id);
+    const { data, error } = await requireSupabase().from('reservations').update({ ...safePayload, updated_at: new Date().toISOString() }).eq('id', id).select(reservationSelect).single();
     if (error) throw new Error(parsePgError(error, 'Gagal memperbarui reservasi.'));
     await logAuditEvent('update_reservation', 'reservations', id, reservationPayload);
     return normalizeReservation(data);
@@ -458,14 +493,14 @@ export const reservationsApi = {
       check_out_date: input.check_out_date,
       checkin_date: input.check_in_date,
       checkout_date: input.check_out_date,
-      nights: Math.max(Number(input.nights || nights || 1), 1),
       adults: Number(input.adults || 1),
       children: Number(input.children || 0),
       status: input.status || 'reserved',
       deposit_amount: moneyValue(input.deposit_amount),
       room_rate: input.room_rate === '' || input.room_rate == null ? 0 : moneyValue(input.room_rate),
       special_notes: input.special_notes || input.notes || null,
-      notes: input.notes || input.special_notes || null
+      notes: input.notes || input.special_notes || null,
+      ...(input.folio_id ? { folio_id: input.folio_id } : {})
     };
   },
   async createLegacy({ guest_name, phone, room_id, check_in_date, check_out_date, status = 'reserved', deposit_amount = 0 }) {
@@ -548,7 +583,7 @@ function normalizeFolio(folio) {
   const payments = folio.folio_payments || [];
   return {
     ...folio,
-    folio_items: items.map((item) => ({ ...item, line_total: moneyValue(item.line_total ?? (moneyValue(item.qty) * moneyValue(item.unit_price))) })),
+    folio_items: items.map((item) => ({ ...item, is_void: item.is_void ?? false, line_total: moneyValue(item.line_total ?? (moneyValue(item.qty) * moneyValue(item.unit_price))) })),
     folio_payments: payments
   };
 }
@@ -563,6 +598,39 @@ function validatePaymentPayload(payload) {
   if (paymentGroup === 'non_tunai' && !payload.reference_number?.trim()) throw new Error('Nomor referensi wajib untuk pembayaran non tunai.');
   if (amount <= 0) throw new Error('Nominal payment/refund harus lebih dari 0.');
   return { paymentGroup, paymentMethod, amount };
+}
+
+
+function normalizeFolioItemType(itemType) {
+  const aliases = { early_check_in: 'early_checkin', late_check_out: 'late_checkout' };
+  return aliases[itemType] || itemType;
+}
+
+function validateFolioItemPayload(folioId, payload) {
+  if (!folioId) throw new Error('Folio wajib dipilih sebelum menambah transaksi.');
+  const itemType = normalizeFolioItemType(payload.item_type);
+  if (!FOLIO_ITEM_TYPES.includes(itemType)) throw new Error(`Tipe item folio tidak valid: ${payload.item_type || '-'}. Jalankan migration schema jika constraint database masih lama.`);
+  if (!payload.description?.trim()) throw new Error('Deskripsi item wajib diisi.');
+  const qty = Number(payload.qty);
+  const unitPrice = payload.unit_price === '' || payload.unit_price == null ? NaN : Number(payload.unit_price);
+  if (!Number.isFinite(qty) || qty <= 0) throw new Error('Qty harus angka lebih dari 0.');
+  if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error('Unit price harus angka minimal 0.');
+  const postingDate = payload.posting_date || today();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(postingDate)) throw new Error('Posting date harus format YYYY-MM-DD.');
+  return {
+    reservation_id: payload.reservation_id || null,
+    stay_id: payload.stay_id || null,
+    room_id: payload.room_id || null,
+    item_type: itemType,
+    description: payload.description.trim(),
+    qty,
+    unit_price: unitPrice,
+    posting_date: postingDate
+  };
+}
+
+function assertSuperAdmin(role) {
+  if (role !== 'super_admin') throw new Error('Hanya super admin yang boleh edit/hapus transaksi.');
 }
 
 export const foliosApi = {
@@ -604,22 +672,21 @@ export const foliosApi = {
   async recalculateFolioTotals(folioId, nextStatus = '') {
     const folio = await this.getFolio(folioId);
     const hotel = await hotelSettingsApi.get().catch(() => ({}));
-    const items = folio.folio_items || [];
+    const items = (folio.folio_items || []).filter((item) => item.is_void !== true);
     const payments = folio.folio_payments || [];
+    const itemTotal = (item) => moneyValue(item.line_total ?? (moneyValue(item.qty) * moneyValue(item.unit_price)));
     const chargeSubtotal = items
       .filter((item) => !['discount', 'refund'].includes(item.item_type))
-      .reduce((sum, item) => sum + Math.max(moneyValue(item.line_total), 0), 0);
+      .reduce((sum, item) => sum + Math.max(itemTotal(item), 0), 0);
     const discountPercent = Math.min(Math.max(moneyValue(folio.discount_percent), 0), 100);
-    const manualDiscount = items.filter((item) => item.item_type === 'discount').reduce((sum, item) => sum + Math.abs(moneyValue(item.line_total)), 0);
+    const manualDiscount = items.filter((item) => item.item_type === 'discount').reduce((sum, item) => sum + Math.abs(itemTotal(item)), 0);
     const discountAmount = Math.min(chargeSubtotal, (chargeSubtotal * discountPercent / 100) + manualDiscount);
     const taxableBase = Math.max(chargeSubtotal - discountAmount, 0);
     const taxAmount = taxableBase * moneyValue(hotel.tax_percent) / 100;
     const serviceAmount = taxableBase * moneyValue(hotel.service_charge_percent) / 100;
     const grandTotal = Math.max(taxableBase + taxAmount + serviceAmount, 0);
     const paidAmount = payments.filter((payment) => payment.payment_type === 'payment').reduce((sum, payment) => sum + moneyValue(payment.amount), 0);
-    const refundPayments = payments.filter((payment) => payment.payment_type === 'refund').reduce((sum, payment) => sum + moneyValue(payment.amount), 0);
-    const refundItems = items.filter((item) => item.item_type === 'refund').reduce((sum, item) => sum + Math.abs(moneyValue(item.line_total)), 0);
-    const refundAmount = refundPayments + refundItems;
+    const refundAmount = payments.filter((payment) => payment.payment_type === 'refund').reduce((sum, payment) => sum + moneyValue(payment.amount), 0);
     const balanceDue = Math.max(grandTotal - paidAmount + refundAmount, 0);
     let status = nextStatus || folio.status || 'open';
     if (status === 'closed' && balanceDue > 0) status = 'debt';
@@ -631,25 +698,49 @@ export const foliosApi = {
     return normalizeFolio(data);
   },
   async addFolioItem(folioId, payload) {
-    if (!FOLIO_ITEM_TYPES.includes(payload.item_type)) throw new Error('Tipe item folio tidak valid.');
-    if (!payload.description?.trim()) throw new Error('Deskripsi item wajib diisi.');
-    const qty = moneyValue(payload.qty || 1);
-    const unitPrice = moneyValue(payload.unit_price);
-    if (qty <= 0) throw new Error('Qty harus lebih dari 0.');
+    const body = validateFolioItemPayload(folioId, payload);
     const { data, error } = await requireSupabase().from('folio_items').insert({
       folio_id: folioId,
-      reservation_id: payload.reservation_id || null,
-      stay_id: payload.stay_id || null,
-      room_id: payload.room_id || null,
-      item_type: payload.item_type,
-      description: payload.description.trim(),
-      qty,
-      unit_price: unitPrice,
-      posting_date: payload.posting_date || today()
+      ...body
     }).select('*').single();
     if (error) throw new Error(parsePgError(error, 'Gagal menambah item folio.'));
     const folio = await this.recalculateFolioTotals(folioId);
-    await logAuditEvent('add_folio_item', 'folio_items', data.id, payload);
+    await logAuditEvent('add_folio_item', 'folio_items', data.id, { folio_id: folioId, ...body });
+    return folio;
+  },
+  async updateFolioItem(folioId, itemId, payload, role) {
+    assertSuperAdmin(role);
+    const before = await this.getFolio(folioId).then((folio) => (folio.folio_items || []).find((item) => item.id === itemId));
+    if (!before) throw new Error('Folio item tidak ditemukan.');
+    const body = validateFolioItemPayload(folioId, payload);
+    const { data, error } = await requireSupabase().from('folio_items').update({
+      item_type: body.item_type,
+      description: body.description,
+      qty: body.qty,
+      unit_price: body.unit_price,
+      posting_date: body.posting_date,
+      updated_at: new Date().toISOString()
+    }).eq('id', itemId).eq('folio_id', folioId).select('*').single();
+    if (error) throw new Error(parsePgError(error, 'Gagal mengedit item folio.'));
+    const folio = await this.recalculateFolioTotals(folioId);
+    await logAuditEvent('edit_folio_item', 'folio_items', itemId, { before, after: data });
+    return folio;
+  },
+  async voidFolioItem(folioId, itemId, role, reason = '') {
+    assertSuperAdmin(role);
+    const before = await this.getFolio(folioId).then((folio) => (folio.folio_items || []).find((item) => item.id === itemId));
+    if (!before) throw new Error('Folio item tidak ditemukan.');
+    const { data: userData } = await requireSupabase().auth.getUser();
+    const { data, error } = await requireSupabase().from('folio_items').update({
+      is_void: true,
+      void_reason: reason || 'Void by super admin',
+      voided_by: userData?.user?.id || null,
+      voided_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }).eq('id', itemId).eq('folio_id', folioId).select('*').single();
+    if (error) throw new Error(parsePgError(error, 'Gagal void item folio. Jika ditolak RLS, jalankan migration RLS folio_items terbaru.'));
+    const folio = await this.recalculateFolioTotals(folioId);
+    await logAuditEvent('void_folio_item', 'folio_items', itemId, { before, after: data, reason });
     return folio;
   },
   async addRoomChargeOnce(folioId, reservation, stay = null) {
@@ -670,7 +761,7 @@ export const foliosApi = {
   async addFolioPayment(folioId, payload) {
     const { paymentGroup, paymentMethod, amount } = validatePaymentPayload(payload);
     const folio = await this.getFolio(folioId);
-    if (payload.payment_type !== 'refund' && amount > moneyValue(folio.balance_due) && moneyValue(folio.balance_due) > 0) throw new Error('Payment melebihi balance due.');
+    if (payload.payment_type !== 'refund' && amount > moneyValue(folio.balance_due)) throw new Error('Payment melebihi balance due.');
     const { data, error } = await requireSupabase().from('folio_payments').insert({
       folio_id: folioId,
       payment_type: payload.payment_type || 'payment',
@@ -731,54 +822,9 @@ export const foliosApi = {
     const fee = moneyValue(options.no_show_fee);
     if (fee <= 0) return null;
     const folio = await this.ensureForReservation(reservation);
-    return this.addFolioItem(folio.id, { reservation_id: reservation.id, item_type: 'cancellation_fee', description: `No-show fee ${reservation.reservation_code}`, qty: 1, unit_price: fee });
+    return this.addFolioItem(folio.id, { reservation_id: reservation.id, item_type: 'no_show_fee', description: `No-show fee ${reservation.reservation_code}`, qty: 1, unit_price: fee });
   }
 };
-
-async function upsertInvoiceForStay(stay, forceStatus = false) {
-  const normalizedStay = normalizeStay(stay);
-  const existing = normalizedStay.invoices?.[0];
-  const hotel = await hotelSettingsApi.get().catch(() => ({}));
-  const billing = calculateStayBilling(normalizedStay, hotel);
-  if (existing) {
-    const { data, error } = await requireSupabase().from('invoices').update({
-      subtotal: billing.subtotal,
-      tax_amount: billing.taxAmount,
-      service_amount: billing.serviceAmount,
-      deposit_applied: billing.depositApplied,
-      total_amount: billing.total,
-      balance_due: billing.balance,
-      status: forceStatus ? billing.paymentStatus : existing.status,
-      updated_at: new Date().toISOString()
-    }).eq('id', existing.id).select(invoiceSelect).single();
-    raise(error);
-    return data;
-  }
-
-  const { data: invoice, error } = await requireSupabase().from('invoices').insert({
-    stay_id: normalizedStay.id,
-    invoice_number: invoiceNumber(hotel.invoice_prefix),
-    subtotal: billing.subtotal,
-    tax_amount: billing.taxAmount,
-    service_amount: billing.serviceAmount,
-    deposit_applied: billing.depositApplied,
-    total_amount: billing.total,
-    balance_due: billing.balance,
-    status: billing.paymentStatus
-  }).select(invoiceSelect).single();
-  raise(error);
-
-  const { error: itemError } = await requireSupabase().from('invoice_items').insert({
-    invoice_id: invoice.id,
-    item_type: 'room_charge',
-    description: `Room charge ${billing.nights} malam`,
-    qty: billing.nights,
-    unit_price: billing.roomRate
-  });
-  if (itemError) console.warn('Invoice item gagal dibuat, invoice tetap tersimpan:', itemError.message);
-  await logAuditEvent('create_invoice', 'invoices', invoice.id, { stay_id: normalizedStay.id });
-  return invoice;
-}
 
 export const staysApi = {
   async list() {
@@ -825,7 +871,7 @@ export const staysApi = {
     if (moneyValue(normalized.deposit_amount) > 0 && !(folio.folio_payments || []).some((payment) => payment.notes === `Deposit ${normalized.reservation_code}`)) {
       await foliosApi.addFolioPayment(folio.id, { payment_group: 'cash', payment_method: 'cash', amount: normalized.deposit_amount, notes: `Deposit ${normalized.reservation_code}` });
     }
-    await roomsApi.updateHkStatus({ id: room_id, fo_status: 'available' }, 'OC', { role: 'manager' });
+    await roomsApi.updateHkStatus({ id: room_id, fo_status: 'available', hk_status: 'VC' }, 'OC', { role: 'manager', allowGroupChange: true });
     await logAuditEvent('check_in', 'stays', stay.id, { reservation_id: normalized.id, room_id, folio_id: folio.id });
     return normalizeStay(stay);
   },
@@ -836,7 +882,7 @@ export const staysApi = {
     const { data, error } = await requireSupabase().from('stays').update({ checkout_at: now, actual_check_out: now, status: 'checked_out', updated_at: now }).eq('id', normalized.id).eq('status', 'checked_in').select(staySelect).single();
     raise(error);
     if (normalized.reservation_id) await reservationsApi.updateStatus({ id: normalized.reservation_id, status: 'checked_in' }, 'checked_out');
-    await roomsApi.updateHkStatus({ id: normalized.room_id, fo_status: 'available' }, 'VD', { role: 'manager' });
+    await roomsApi.updateHkStatus({ id: normalized.room_id, fo_status: 'available', hk_status: normalized.rooms?.hk_status || 'OC' }, 'VD', { role: 'manager', allowGroupChange: true });
     const folio = normalized.folio_id ? await foliosApi.getFolio(normalized.folio_id).catch(() => null) : await foliosApi.ensureForReservation(normalized.reservations || { ...normalized, id: normalized.reservation_id }, normalized).catch(() => null);
     if (folio) await foliosApi.closeFolio(folio.id).catch((err) => console.warn('Close folio saat check-out gagal:', err.message));
     const invoice = await upsertInvoiceForStay({ ...normalizeStay(data), invoices: normalized.invoices || [] }, true);
@@ -1029,7 +1075,7 @@ export const reportsApi = {
         payment_collected: revenuePayments.reduce((total, payment) => total + moneyValue(payment.amount), 0),
         outstanding_balance: folios.reduce((total, folio) => total + moneyValue(folio.balance_due), 0),
         refund_total: refundPayments.reduce((total, payment) => total + moneyValue(payment.amount), 0),
-        cancellation_total: folios.flatMap((folio) => folio.folio_items || []).filter((item) => item.item_type === 'cancellation_fee').reduce((total, item) => total + moneyValue(item.line_total), 0),
+        cancellation_total: folios.flatMap((folio) => folio.folio_items || []).filter((item) => item.item_type === 'cancellation_fee' && item.is_void !== true).reduce((total, item) => total + moneyValue(item.line_total), 0),
         payment_methods: methods
       },
       arrivalsDepartures: {

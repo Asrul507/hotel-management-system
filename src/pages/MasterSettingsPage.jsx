@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FO_STATUSES, HK_STATUSES, hotelSettingsApi, roomTypesApi, roomsApi } from '../services/api';
+import { FO_STATUSES, hotelSettingsApi, roomTypesApi, roomsApi } from '../services/api';
+import { HK_STATUSES, allowedNextHkStatuses, deriveFoStatusFromHkStatus } from '../utils/roomStatus';
 
 const hotelFormEmpty = { hotel_name: '', address: '', phone: '', tax_percent: 0, service_charge_percent: 0, invoice_prefix: 'INV', default_checkin_time: '14:00', default_checkout_time: '12:00' };
 const typeFormEmpty = { code: '', name: '', description: '', base_rate: 0, max_occupancy: 2, facilities: '', is_active: true };
@@ -48,8 +49,8 @@ export default function MasterSettingsPage() {
   useEffect(() => { load(); }, []);
 
   function updateRoomField(field, value) {
-    if (field === 'hk_status' && ['OOO', 'OOS'].includes(value)) {
-      setRoomForm((current) => ({ ...current, hk_status: value, fo_status: 'unavailable' }));
+    if (field === 'hk_status') {
+      setRoomForm((current) => ({ ...current, hk_status: value, fo_status: deriveFoStatusFromHkStatus(value, current.fo_status) }));
       return;
     }
     setRoomForm((current) => ({ ...current, [field]: value }));
@@ -125,7 +126,7 @@ export default function MasterSettingsPage() {
           <label>Lantai<input value={roomForm.floor} onChange={(e) => updateRoomField('floor', e.target.value)} /></label>
           <label>Tipe kamar<select required value={roomForm.room_type_id} onChange={(e) => updateRoomField('room_type_id', e.target.value)}>{activeRoomTypes.map((type) => <option key={type.id} value={type.id}>{type.code ? `${type.code} - ` : ''}{type.name}</option>)}</select></label>
           <label>FO Status<select value={roomForm.fo_status} onChange={(e) => updateRoomField('fo_status', e.target.value)}>{FO_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}</select></label>
-          <label>HK Status<select value={roomForm.hk_status} onChange={(e) => updateRoomField('hk_status', e.target.value)}>{HK_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}</select></label>
+          <label>HK Status<select value={roomForm.hk_status} onChange={(e) => updateRoomField('hk_status', e.target.value)}>{(editingRoomId ? allowedNextHkStatuses(roomForm, 'manager') : HK_STATUSES).map((status) => <option key={status} value={status}>{status}</option>)}</select></label>
           <label>Status aktif<select value={roomForm.is_active ? 'active' : 'inactive'} onChange={(e) => updateRoomField('is_active', e.target.value === 'active')}><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
           <label className="full">Catatan<textarea value={roomForm.notes} onChange={(e) => updateRoomField('notes', e.target.value)} placeholder="Wajib untuk OOO/OOS" /></label>
           <button disabled={saving}>{saving ? 'Menyimpan...' : editingRoomId ? 'Simpan Perubahan' : 'Tambah Kamar'}</button>

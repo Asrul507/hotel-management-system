@@ -606,3 +606,69 @@ alter table folio_payments add column if not exists reference_number text;
 alter table folio_payments add column if not exists card_or_account_number text;
 alter table folio_payments add column if not exists notes text;
 alter table folio_payments add column if not exists paid_at timestamptz not null default now();
+
+-- Folio/reservation/status hardening for v0.3.0-folio (safe/idempotent).
+-- Do not insert/update reservations.nights from the frontend; it may be a generated column.
+alter table reservations add column if not exists folio_id uuid references folios(id);
+alter table reservations add column if not exists cancellation_reason text;
+alter table reservations add column if not exists cancellation_fee numeric(12,2) not null default 0;
+alter table reservations add column if not exists no_show_fee numeric(12,2) not null default 0;
+
+create index if not exists reservations_folio_id_idx on reservations(folio_id);
+create index if not exists reservations_room_date_status_idx on reservations(room_id, check_in_date, check_out_date, status);
+create index if not exists rooms_ready_lookup_idx on rooms(room_type_id, is_active, fo_status, hk_status);
+create index if not exists folio_items_folio_id_idx on folio_items(folio_id);
+create index if not exists folio_payments_folio_id_idx on folio_payments(folio_id);
+
+alter table folio_items drop constraint if exists folio_items_type_check;
+alter table folio_items add constraint folio_items_type_check check (item_type in ('room','extra_bed','breakfast','early_check_in','late_check_out','restaurant','laundry','minibar','other','discount','cancellation_fee','refund','adjustment')) not valid;
+
+alter table rooms drop constraint if exists rooms_hk_status_check;
+alter table rooms add constraint rooms_hk_status_check check (hk_status in ('VR','VD','VC','OR','OD','OC','OOO','OOS')) not valid;
+
+alter table audit_logs enable row level security;
+alter table folios enable row level security;
+alter table folio_items enable row level security;
+alter table folio_payments enable row level security;
+
+drop policy if exists "authenticated insert audit logs" on audit_logs;
+create policy "authenticated insert audit logs" on audit_logs for insert to authenticated with check (true);
+drop policy if exists "authenticated read audit logs" on audit_logs;
+create policy "authenticated read audit logs" on audit_logs for select to authenticated using (true);
+
+drop policy if exists "authenticated read folios" on folios;
+create policy "authenticated read folios" on folios for select to authenticated using (true);
+drop policy if exists "authenticated manage folios" on folios;
+create policy "authenticated manage folios" on folios for all to authenticated using (true) with check (true);
+drop policy if exists "authenticated read folio items" on folio_items;
+create policy "authenticated read folio items" on folio_items for select to authenticated using (true);
+drop policy if exists "authenticated manage folio items" on folio_items;
+create policy "authenticated manage folio items" on folio_items for all to authenticated using (true) with check (true);
+drop policy if exists "authenticated read folio payments" on folio_payments;
+create policy "authenticated read folio payments" on folio_payments for select to authenticated using (true);
+drop policy if exists "authenticated manage folio payments" on folio_payments;
+create policy "authenticated manage folio payments" on folio_payments for all to authenticated using (true) with check (true);
+
+-- Folio item hardening: valid charge types, void audit columns, numeric checks (safe/idempotent).
+alter table folio_items add column if not exists is_void boolean not null default false;
+alter table folio_items add column if not exists void_reason text;
+alter table folio_items add column if not exists voided_by uuid references profiles(id);
+alter table folio_items add column if not exists voided_at timestamptz;
+
+alter table folio_items drop constraint if exists folio_items_type_check;
+alter table folio_items add constraint folio_items_type_check check (item_type in ('room','extra_bed','breakfast','early_checkin','late_checkout','laundry','restaurant','minibar','other','discount','cancellation_fee','no_show_fee','refund','adjustment')) not valid;
+alter table folio_items drop constraint if exists folio_items_qty_positive_check;
+alter table folio_items add constraint folio_items_qty_positive_check check (qty > 0) not valid;
+alter table folio_items drop constraint if exists folio_items_unit_price_non_negative_check;
+alter table folio_items add constraint folio_items_unit_price_non_negative_check check (unit_price >= 0) not valid;
+alter table folio_items drop constraint if exists folio_items_description_required_check;
+alter table folio_items add constraint folio_items_description_required_check check (description is not null and length(trim(description)) > 0) not valid;
+alter table folio_items drop constraint if exists folio_items_posting_date_required_check;
+alter table folio_items add constraint folio_items_posting_date_required_check check (posting_date is not null) not valid;
+
+create index if not exists folio_items_active_folio_id_idx on folio_items(folio_id) where is_void = false;
+
+drop policy if exists "authenticated read folio items" on folio_items;
+create policy "authenticated read folio items" on folio_items for select to authenticated using (true);
+drop policy if exists "authenticated manage folio items" on folio_items;
+create policy "authenticated manage folio items" on folio_items for all to authenticated using (true) with check (true);
