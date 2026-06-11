@@ -1,14 +1,21 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ConfigError from '../components/ConfigError';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function LoginPage() {
-  const { signIn, configError, isSupabaseConfigured } = useAuth();
+  const { signIn, session, profile, loading, authError, profileError, configError, isSupabaseConfigured } = useAuth();
   const nav = useNavigate();
   const [form, setForm] = useState({ email: '', password: '' });
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+
+  useEffect(() => {
+    if (!loading && session && profile) {
+      nav('/');
+    }
+  }, [loading, nav, profile, session]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -26,7 +33,6 @@ export default function LoginPage() {
         setError(err.message || 'Login gagal. Periksa email dan password lalu coba lagi.');
         return;
       }
-      nav('/');
     } catch (err) {
       setError(err.message || 'Login gagal. Silakan coba lagi.');
     } finally {
@@ -39,5 +45,5 @@ export default function LoginPage() {
   return <div className="auth"><form onSubmit={submit} className="card"><h1>Hotel Management System</h1>
     <input placeholder="Email" type="email" autoComplete="email" required value={form.email} onChange={(e)=>setForm({...form,email:e.target.value})}/>
     <input placeholder="Password" type="password" autoComplete="current-password" required value={form.password} onChange={(e)=>setForm({...form,password:e.target.value})}/>
-    {error && <p className="error">{error}</p>}<button disabled={submitting}>{submitting ? 'Memproses...' : 'Login'}</button></form></div>;
+    {(error || authError || profileError) && <p className="error">{error || authError || profileError}</p>}<button disabled={submitting || loading}>{submitting || loading ? 'Memproses...' : 'Login'}</button></form></div>;
 }

@@ -167,9 +167,68 @@ export function AuthProvider({ children }) {
     profileError,
     configError: supabaseConfigError,
     isSupabaseConfigured,
-    signIn: (email, password) => {
+    signIn: async (email, password) => {
       if (!isSupabaseConfigured || !supabase) return unavailableClientError();
-      return supabase.auth.signInWithPassword({ email, password });
+
+      const requestId = authRequestRef.current + 1;
+      authRequestRef.current = requestId;
+      authLog('AUTH_INIT', { requestId, event: 'SIGN_IN_SUBMIT' });
+      setLoading(true);
+      setAuthError(null);
+      setProfileError(null);
+
+      try {
+        const result = await withTimeout(
+          supabase.auth.signInWithPassword({ email, password }),
+          'AUTH_SIGN_IN'
+        );
+
+        if (result.error) {
+          const message = result.error.message || 'Login gagal. Periksa email dan password lalu coba lagi.';
+          setSession(null);
+          setProfile(null);
+          setAuthError(message);
+          authLog('AUTH_ERROR', { step: 'sign_in', message });
+          return result;
+        }
+
+        const nextSession = result.data?.session || null;
+        setSession(nextSession);
+        setAuthError(null);
+
+        if (nextSession?.user) {
+          authLog('AUTH_SESSION_FOUND', { source: 'sign_in', userId: nextSession.user.id });
+          const { data, error } = await withTimeout(
+            supabase.from('profiles').select('*').eq('id', nextSession.user.id).maybeSingle(),
+            'AUTH_PROFILE_LOADED'
+          );
+
+          if (error) throw error;
+
+          if (data) {
+            setProfile(data);
+            setProfileError(null);
+            authLog('AUTH_PROFILE_LOADED', { userId: nextSession.user.id, role: data.role });
+          } else {
+            const message = 'Profile akun tidak ditemukan. Hubungi admin untuk membuat profile dan role.';
+            setProfile(null);
+            setProfileError(message);
+            authLog('AUTH_ERROR', { step: 'profile_missing', userId: nextSession.user.id });
+          }
+        }
+
+        return result;
+      } catch (error) {
+        const message = error.message || 'Login gagal. Silakan coba lagi.';
+        setProfile(null);
+        setAuthError(message);
+        setProfileError(null);
+        authLog('AUTH_ERROR', { step: 'sign_in', message });
+        return { data: null, error: new Error(message) };
+      } finally {
+        setLoading(false);
+        authLog('AUTH_DONE', { requestId, event: 'SIGN_IN_SUBMIT' });
+      }
     },
     signOut: () => {
       if (!isSupabaseConfigured || !supabase) return unavailableClientError();
