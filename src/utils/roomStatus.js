@@ -3,7 +3,7 @@ export const VACANT_HK_STATUSES = ['VR', 'VD', 'VC', 'OOO'];
 export const OCCUPIED_HK_STATUSES = ['OR', 'OD', 'OC', 'OOO'];
 export const OUT_OF_SERVICE_HK_STATUSES = ['OOS'];
 export const OUT_OF_INVENTORY_HK_STATUSES = ['OOO', 'OOS'];
-export const READY_FOR_RESERVATION_HK_STATUSES = ['VR', 'VC'];
+export const READY_FOR_RESERVATION_HK_STATUSES = ['VR'];
 export const HK_STATUSES = ['VR', 'VD', 'VC', 'OR', 'OD', 'OC', 'OOO', 'OOS'];
 
 const PRIVILEGED_ROLES = ['super_admin', 'manager'];
@@ -27,7 +27,7 @@ export function isOutOfInventoryStatus(hkStatus) {
 export function isReadyForReservation(room) {
   return room?.is_active !== false
     && room?.fo_status === 'available'
-    && READY_FOR_RESERVATION_HK_STATUSES.includes(room?.hk_status);
+    && room?.hk_status === 'VR';
 }
 
 export function deriveFoStatusFromHkStatus(hkStatus, previousFoStatus = 'available') {
