@@ -162,3 +162,23 @@ button.small { width: auto; padding: .45rem .7rem; margin: 0; white-space: nowra
 @media (max-width: 1120px){ .pms-topbar{align-items:flex-start; flex-wrap:wrap}.top-module-nav{order:3; flex-basis:100%; justify-content:flex-start}.kpi-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.main-menu-grid{grid-template-columns:repeat(2,minmax(0,1fr))} }
 @media (max-width: 768px){ .pms-topbar{padding:.75rem}.topbar-actions{width:100%; min-width:0; justify-content:space-between; flex-wrap:wrap}.user-chip{align-items:flex-start}.pms-content{padding:.85rem}.hero-dashboard{align-items:stretch; flex-direction:column; border-radius:22px}.hero-dashboard .button-link{width:100%}.kpi-grid,.main-menu-grid{grid-template-columns:1fr}.menu-card{min-height:0}.menu-card-visual img{max-height:180px}.settings-popover{left:0; right:auto}.activity-card table{min-width:560px}.collapsible-lists{grid-template-columns:1fr} }
 @media (max-width: 480px){ .brand-lockup small{display:none}.top-module-nav a{padding:.5rem .7rem}.kpi-card{min-height:132px}.menu-card-body dl div{align-items:flex-start; flex-direction:column; gap:.15rem}.logout-button{flex:1; justify-content:center}.settings-menu summary{width:100%; justify-content:center} }
+
+/* Reusable modal + folio operational actions */
+.modal-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 1rem; background: rgba(2, 6, 23, .72); backdrop-filter: blur(8px); }
+.modal-card { width: min(760px, 100%); max-height: min(90vh, 900px); overflow: auto; padding: 1rem; border: 1px solid rgba(148, 163, 184, .24); border-radius: 24px; background: #0f172a; box-shadow: 0 30px 100px rgba(0, 0, 0, .5); }
+.modal-header, .modal-footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.modal-header h2 { margin: 0; }
+.modal-close { width: 2.25rem; height: 2.25rem; margin: 0; padding: 0; border-radius: 999px; background: #1e293b; color: #fff; font-size: 1.35rem; line-height: 1; }
+.overview-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
+.overview-field { padding: .85rem; border: 1px solid rgba(148, 163, 184, .18); border-radius: 16px; background: rgba(30, 41, 59, .72); }
+.overview-field span { display: block; color: #93c5fd; font-size: .78rem; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; }
+.overview-field strong { display: block; margin-top: .25rem; color: #fff; overflow-wrap: anywhere; }
+tbody tr { cursor: pointer; }
+tbody tr button, tbody tr a, tbody tr input, tbody tr select, tbody tr textarea { cursor: auto; }
+.folio-summary-card { display: flex; align-items: stretch; justify-content: space-between; gap: 1rem; border-color: rgba(96, 165, 250, .38); background: linear-gradient(135deg, rgba(37, 99, 235, .24), rgba(15, 23, 42, .96)); }
+.folio-summary-main { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .85rem; flex: 1; }
+.folio-summary-main div { padding: .85rem; border-radius: 18px; background: rgba(15, 23, 42, .58); }
+.folio-summary-main span { display: block; color: #bfdbfe; font-size: .78rem; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; }
+.folio-summary-main strong { display: block; margin-top: .25rem; color: #fff; font-size: clamp(1.15rem, 2vw, 1.7rem); overflow-wrap: anywhere; }
+.folio-summary-actions { display: flex; align-items: center; justify-content: flex-end; gap: .5rem; flex-wrap: wrap; }
+@media (max-width: 768px){ .modal-card{border-radius:18px}.overview-field-grid,.folio-summary-main{grid-template-columns:1fr}.folio-summary-card{flex-direction:column}.folio-summary-actions{justify-content:flex-start}.modal-backdrop{align-items:end} }

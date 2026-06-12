@@ -450,7 +450,7 @@ async function validateReservation(payload, id = '') {
     const conflict = (data || []).find((reservation) => reservation.id !== id && datesOverlap(reservation.check_in_date, reservation.check_out_date, payload.check_in_date, payload.check_out_date));
     if (conflict) throw new Error(`Double booking ditolak. Kamar sudah dipakai oleh ${conflict.reservation_code || conflict.reservation_number}.`);
     const activeStays = await staysApi.active().catch(() => []);
-    const stayConflict = activeStays.find((stay) => stay.room_id === payload.room_id && stay.status === 'checked_in');
+    const stayConflict = activeStays.find((stay) => stay.room_id === payload.room_id && stay.status === 'checked_in' && stay.reservation_id !== id);
     if (stayConflict) throw new Error('Kamar sedang in-house dan tidak boleh dipilih.');
   }
 }
@@ -532,6 +532,20 @@ export const reservationsApi = {
     if (error) throw new Error(parsePgError(error, 'Gagal memperbarui reservasi.'));
     await logAuditEvent('update_reservation', 'reservations', id, reservationPayload);
     return normalizeReservation(data);
+  },
+  async updateFromFolio(id, payload, role = '') {
+    if (!['admin', 'super_admin'].includes(role)) throw new Error('Hanya admin/super admin yang boleh edit reservasi dari Folio.');
+    const current = await this.list({ status: 'all' }).then((rows) => rows.find((row) => row.id === id));
+    if (!current) throw new Error('Reservasi tidak ditemukan.');
+    if (payload.guest_name?.trim() && current.guest_id) await guestsApi.update(current.guest_id, { ...current.guests, full_name: payload.guest_name.trim() });
+    const updated = await this.update(id, { ...current, ...payload, guest_id: current.guest_id });
+    if (updated.folio_id) await foliosApi.syncReservationRoomCharge(updated.folio_id, updated);
+    return updated;
+  },
+  async cancelFromFolio(reservation, role = '', reason = '') {
+    if (!['admin', 'super_admin'].includes(role)) throw new Error('Hanya admin/super admin yang boleh hapus/cancel reservasi dari Folio.');
+    const normalized = normalizeReservation(reservation);
+    return this.updateStatus(normalized, 'cancelled', { cancellation_reason: reason || 'Cancelled from Folio', cancellation_fee: 0 });
   },
   async buildPayload(input, id = '') {
     const nights = nightsBetween(input.check_in_date, input.check_out_date);
@@ -818,6 +832,53 @@ export const foliosApi = {
       unit_price: moneyValue(reservation.room_rate)
     });
   },
+  async syncReservationRoomCharge(folioId, reservation) {
+    const normalized = normalizeReservation(reservation);
+    const folio = await this.getFolio(folioId);
+    const nights = Math.max(Number(normalized.nights || nightsBetween(normalized.check_in_date, normalized.check_out_date) || 1), 1);
+    const existing = (folio.folio_items || []).find((item) => item.item_type === 'room' && item.reservation_id === normalized.id && item.is_void !== true);
+    const body = {
+      reservation_id: normalized.id,
+      room_id: normalized.room_id || null,
+      item_type: 'room',
+      description: `Room charge ${normalized.rooms?.room_number || ''} x ${nights} malam`,
+      qty: nights,
+      unit_price: moneyValue(normalized.room_rate),
+      posting_date: normalized.check_in_date || today()
+    };
+    if (!existing) return this.addFolioItem(folioId, body);
+    const { error } = await requireSupabase().from('folio_items').update({ ...body, updated_at: new Date().toISOString() }).eq('id', existing.id).eq('folio_id', folioId);
+    if (error) throw new Error(parsePgError(error, 'Gagal sync room charge reservasi.'));
+    await logAuditEvent('sync_reservation_room_charge', 'folio_items', existing.id, body);
+    return this.recalculateFolioTotals(folioId);
+  },
+  async extendStay(folioId, reservation, payload = {}) {
+    const normalized = normalizeReservation(reservation);
+    const oldCheckout = normalized.check_out_date;
+    const newCheckout = payload.new_check_out_date;
+    if (!newCheckout || newCheckout <= oldCheckout) throw new Error('Tanggal checkout baru harus lebih besar dari checkout lama.');
+    if (normalized.room_id) {
+      const { data, error } = await requireSupabase().from('reservations').select('id,reservation_code,reservation_number,check_in_date,check_out_date,status').eq('room_id', normalized.room_id).in('status', ['reserved', 'checked_in']);
+      raise(error);
+      const conflict = (data || []).find((item) => item.id !== normalized.id && datesOverlap(item.check_in_date, item.check_out_date, oldCheckout, newCheckout));
+      if (conflict) throw new Error(`Extend stay ditolak. Kamar bentrok dengan ${conflict.reservation_code || conflict.reservation_number}.`);
+    }
+    const extraNights = nightsBetween(oldCheckout, newCheckout);
+    const rate = payload.extra_nightly_rate === '' || payload.extra_nightly_rate == null ? moneyValue(normalized.room_rate) : moneyValue(payload.extra_nightly_rate);
+    if (rate <= 0) throw new Error('Tarif tambahan per malam wajib diisi karena rate kamar belum tersedia.');
+    const updated = await reservationsApi.update(normalized.id, { ...normalized, check_out_date: newCheckout, checkout_date: newCheckout });
+    await this.addFolioItem(folioId, {
+      reservation_id: normalized.id,
+      room_id: normalized.room_id || null,
+      item_type: 'room',
+      description: `Extend stay ${normalized.reservation_code || ''}: ${oldCheckout} ke ${newCheckout}`,
+      qty: extraNights,
+      unit_price: rate,
+      posting_date: oldCheckout || today()
+    });
+    await logAuditEvent('extend_stay', 'reservations', normalized.id, { old_checkout: oldCheckout, new_checkout: newCheckout, extra_nights: extraNights, rate });
+    return this.getFolio(folioId);
+  },
   async addFolioPayment(folioId, payload) {
     const { paymentGroup, paymentMethod, amount } = validatePaymentPayload(payload);
     const folio = await this.getFolio(folioId);
@@ -831,7 +892,7 @@ export const foliosApi = {
       reference_number: payload.reference_number || null,
       card_or_account_number: payload.card_or_account_number || null,
       notes: payload.notes || null,
-      paid_at: new Date().toISOString()
+      paid_at: payload.paid_at || new Date().toISOString()
     }).select('*').single();
     if (error) throw new Error(parsePgError(error, 'Gagal menyimpan payment folio.'));
     const updated = await this.recalculateFolioTotals(folioId, payload.payment_type === 'refund' ? 'refunded' : '');

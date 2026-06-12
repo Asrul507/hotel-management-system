@@ -4,6 +4,7 @@ import { faChevronDown, faDoorOpen, faGear, faHouse } from '@fortawesome/free-so
 import { useAuth } from '../contexts/AuthContext';
 import { canAccess } from '../utils/roles';
 import { APP_BUILD_LABEL, APP_VERSION } from '../config/appVersion';
+import RowOverviewModal from '../components/RowOverviewModal';
 
 const settingsMenus = [
   ['/master-settings', 'Room Configuration', 'masterSettings'],
@@ -41,6 +42,7 @@ export default function AppLayout() {
         </div>
       </header>
       <main className="content pms-content"><Outlet /></main>
+      <RowOverviewModal />
     </div>
   );
 }
