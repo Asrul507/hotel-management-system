@@ -111,8 +111,10 @@ export default function FrontOfficePage() {
     <div className="page-header"><div><h1>Front Office</h1><p>Expected arrival/departure, actual arrival/departure, in-house, dan action check-in/check-out dikelola dari satu menu.</p></div><Link className="button-link" to="/billing">Buat Reservasi/Folio</Link></div>
     {error && <div className="alert error">{error}</div>}
     {success && <div className="alert success">{success}</div>}
-    <div className="card action-toolbar" role="toolbar" aria-label="Front Office tabs">
-      {views.map(([value, label]) => <button key={value} type="button" className={`action-pill ${activeView === value ? 'active' : ''}`} onClick={() => setActiveView(value)}><FontAwesomeIcon icon={faClipboardList} aria-hidden="true" />{label}</button>)}
+    <div className="card action-toolbar module-tabs" role="toolbar" aria-label="Front Office tabs">
+      {views.filter(([value]) => value !== 'all').map(([value, label]) => <button key={value} type="button" className={`action-pill ${activeView === value ? 'active' : ''}`} onClick={() => setActiveView(value)}><FontAwesomeIcon icon={faClipboardList} aria-hidden="true" />{label}</button>)}
+      <Link className="button-link secondary-link" to="/billing">Folio</Link>
+      <Link className="button-link secondary-link" to="/guests">Guest Database</Link>
     </div>
     <form className="card filter-grid" onSubmit={(e) => { e.preventDefault(); load(); }}>
       <input placeholder="Cari guest / kode / kamar" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} />

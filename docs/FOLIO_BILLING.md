@@ -197,3 +197,19 @@ Billing status memakai helper `getBillingStatus(folio)`:
 - `unpaid` jika belum ada pembayaran.
 
 Check-in / Check-out mengambil status folio terbaru, bukan invoice legacy, sehingga folio lunas tampil `PAID`.
+
+## Operasional Folio: Extend Stay dan Bayar Debt
+
+### Extend Stay / Tambah Hari
+1. Buka menu **Front Office** atau **Folio / Billing Workspace** lalu pilih folio tamu.
+2. Masuk tab **Add Reservation** dan gunakan tombol **Extend Stay** pada baris reservasi.
+3. Isi tanggal checkout baru dan tarif tambahan per malam. Jika rate kamar belum tersedia, tarif manual wajib diisi.
+4. Sistem menolak extend jika tanggal checkout baru tidak lebih besar dari checkout lama atau kamar bentrok dengan reservasi lain pada rentang tambahan.
+5. Setelah berhasil, tanggal checkout reservasi diperbarui dan charge tambahan masuk ke folio.
+
+### Bayar Debt
+1. Pilih folio yang masih memiliki **Balance Due** atau status **debt**.
+2. Klik tombol **Bayar Debt** pada header folio atau tab **Add Payment**.
+3. Isi nominal pembayaran, group/metode pembayaran, tanggal pembayaran, referensi jika non-tunai, dan catatan.
+4. Pembayaran sebagian akan mengurangi balance dan status tetap debt/partial sesuai sisa tagihan; pembayaran penuh akan menutup balance dan folio akan dihitung ulang sebagai lunas/closed.
+5. Tombol submit otomatis disabled saat proses agar tidak double submit.
