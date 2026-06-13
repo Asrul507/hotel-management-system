@@ -969,14 +969,29 @@ export const foliosApi = {
 
 export const posApi = {
   async listFolios(filters = {}) {
-    const rows = await foliosApi.list({ status: filters.status || 'all', search: filters.search || '' });
-    const roomSearch = filters.room?.trim()?.toLowerCase();
-    const date = filters.date || '';
+    const rows = await foliosApi.list({ status: 'all', search: '' });
+    const search = filters.search?.trim()?.toLowerCase() || '';
+    const roomSearch = filters.room?.trim()?.toLowerCase() || '';
+    const status = filters.status || 'all';
+    const dateFrom = filters.dateFrom || '';
+    const dateTo = filters.dateTo || '';
+    const normalizeStatus = (value = '') => ['closed', 'paid', 'settled', 'lunas'].includes(String(value).toLowerCase()) ? 'close' : 'open';
+    const inDateRange = (value) => {
+      const date = String(value || '').slice(0, 10);
+      if (!date) return !dateFrom && !dateTo;
+      return (!dateFrom || date >= dateFrom) && (!dateTo || date <= dateTo);
+    };
     return rows.filter((folio) => {
       const reservations = folio.reservations || [];
-      const roomOk = !roomSearch || reservations.some((reservation) => reservation.rooms?.room_number?.toLowerCase().includes(roomSearch));
-      const dateOk = !date || reservations.some((reservation) => reservation.check_in_date <= date && reservation.check_out_date >= date);
-      return roomOk && dateOk;
+      const payments = folio.folio_payments || [];
+      const roomNumbers = reservations.map((reservation) => reservation.rooms?.room_number).filter(Boolean);
+      const billNumbers = payments.map((payment) => payment.bill_no || payment.reference_number).filter(Boolean);
+      const textOk = !search || [folio.folio_number, folio.guests?.full_name, folio.status, ...roomNumbers, ...billNumbers].some((field) => String(field || '').toLowerCase().includes(search));
+      const roomOk = !roomSearch || roomNumbers.some((room) => String(room).toLowerCase().includes(roomSearch));
+      const statusOk = status === 'all' || normalizeStatus(folio.status) === status;
+      const candidateDates = [folio.created_at, ...payments.map((payment) => payment.paid_at || payment.created_at), ...reservations.map((reservation) => reservation.check_in_date)];
+      const dateOk = (!dateFrom && !dateTo) || candidateDates.some(inDateRange);
+      return textOk && roomOk && statusOk && dateOk;
     });
   },
   async getFolio(folioId) {

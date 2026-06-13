@@ -7,22 +7,27 @@ import IconButton from '../components/IconButton';
 import { faFilter, faPrint, faReceipt } from '@fortawesome/free-solid-svg-icons';
 
 const money = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 });
+const addDays = (date, days) => { const next = new Date(`${date}T00:00:00`); next.setDate(next.getDate() + days); return next.toISOString().slice(0, 10); };
+const defaultFilters = () => ({ dateFrom: addDays(today(), -7), dateTo: today(), status: 'all', search: '' });
 const paymentEmpty = { amount: '', payment_group: 'cash', payment_method: 'cash', paid_at: new Date().toISOString().slice(0, 16), reference_number: '', notes: '' };
 const adjustmentEmpty = { adjustment_type: 'correction', amount: '', posting_date: today(), notes: '' };
 const paymentMethods = ['cash', ...NON_CASH_METHODS.filter((method) => method !== 'e_wallet')];
+const closeStatuses = ['close', 'closed', 'paid', 'settled', 'lunas'];
+const openStatuses = ['open', 'unpaid', 'partial', 'debt', 'outstanding'];
+const normalizePOSStatus = (status = '') => closeStatuses.includes(String(status).toLowerCase()) ? 'Close' : 'Open';
+const formatDate = (value) => String(value || '-').slice(0, 10) || '-';
 
 export default function PosPage() {
   const { profile, session } = useAuth();
   const dialog = useAppDialog();
   const [params, setParams] = useSearchParams();
-  const [filters, setFilters] = useState({ search: '', room: '', status: 'all', date: '' });
+  const [filters, setFilters] = useState(defaultFilters);
   const [folios, setFolios] = useState([]);
   const [selectedId, setSelectedId] = useState(params.get('folio_id') || '');
   const [selected, setSelected] = useState(null);
+  const [activePanel, setActivePanel] = useState('summary');
   const [payment, setPayment] = useState(paymentEmpty);
   const [adjustment, setAdjustment] = useState(adjustmentEmpty);
-  const [shiftDate, setShiftDate] = useState(today());
-  const [shift, setShift] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState('');
@@ -30,25 +35,36 @@ export default function PosPage() {
   const [success, setSuccess] = useState('');
 
   const canTransact = ['admin', 'super_admin'].includes(profile?.role);
+  const ledger = useMemo(() => posApi.buildLedger(selected), [selected]);
+  const payments = useMemo(() => ledger.filter((row) => row.source === 'payment'), [ledger]);
+  const adjustments = useMemo(() => ledger.filter((row) => row.source === 'charge' && Number(row.amount || 0) < 0), [ledger]);
+  const settlement = useMemo(() => posApi.settlement(selected), [selected]);
+  const pageStats = useMemo(() => ({
+    open: folios.filter((folio) => normalizePOSStatus(folio.status) === 'Open').length,
+    close: folios.filter((folio) => normalizePOSStatus(folio.status) === 'Close').length,
+    balance: folios.reduce((sum, folio) => sum + Number(folio.balance_due || 0), 0)
+  }), [folios]);
   const reservations = selected?.reservations || [];
   const firstReservation = reservations[0] || {};
   const roomText = reservations.map((reservation) => reservation.rooms?.room_number).filter(Boolean).join(', ') || '-';
-  const ledger = useMemo(() => posApi.buildLedger(selected), [selected]);
-  const settlement = useMemo(() => posApi.settlement(selected), [selected]);
   const nonCash = payment.payment_group === 'non_tunai';
 
-  async function load(preferredId = selectedId) {
+  async function load(preferredId = selectedId, nextFilters = filters) {
+    if (nextFilters.dateFrom && nextFilters.dateTo && nextFilters.dateFrom > nextFilters.dateTo) {
+      setError('Tanggal dari tidak boleh lebih besar dari tanggal sampai.');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
-      const data = await posApi.listFolios(filters);
+      const data = await posApi.listFolios(nextFilters);
       setFolios(data);
-      const nextId = preferredId || data[0]?.id || '';
+      const nextId = preferredId && data.some((folio) => folio.id === preferredId) ? preferredId : '';
       const next = nextId ? await posApi.getFolio(nextId).catch(() => null) : null;
       setSelectedId(next?.id || '');
       setSelected(next);
       if (next?.id) setParams({ folio_id: next.id }, { replace: true });
-      setShift(await posApi.shiftSummary(shiftDate).catch(() => null));
+      if (!next?.id && params.get('folio_id')) setParams({}, { replace: true });
     } catch (err) {
       setError(err.message);
       setSelected(null);
@@ -59,8 +75,15 @@ export default function PosPage() {
 
   useEffect(() => { load(params.get('folio_id') || ''); }, []);
 
-  async function selectFolio(id) {
+  async function resetFilters() {
+    const next = defaultFilters();
+    setFilters(next);
+    await load('', next);
+  }
+
+  async function selectFolio(id, panel = 'summary') {
     setSelectedId(id);
+    setActivePanel(panel);
     await load(id);
   }
 
@@ -122,45 +145,47 @@ export default function PosPage() {
     }
   }
 
-  return <div className="page-stack pos-page">
-    <div className="page-header"><div><h1>P.O.S / Kasir</h1><p>Pusat payment, settlement, refund, cancellation, dan correction folio.</p></div><Link className="button-link secondary-link" to="/billing">Kembali ke Folio</Link></div>
+  return <div className="page-stack pos-page compact-pos-page">
+    <div className="page-header"><div><h1>P.O.S / Kasir</h1><p>Kelola pembayaran folio, bill, refund, dan settlement.</p></div><Link className="button-link secondary-link" to="/billing">Kembali ke Folio</Link></div>
     {error && <div className="alert error">{error}</div>}
     {success && <div className="alert success">{success}</div>}
 
-    <form className="card filter-grid" onSubmit={(event) => { event.preventDefault(); load(); }}>
-      <input placeholder="No folio / nama tamu" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
-      <input placeholder="No kamar" value={filters.room} onChange={(event) => setFilters({ ...filters, room: event.target.value })} />
-      <select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="all">Semua status</option><option value="open">Open</option><option value="closed">Paid/Closed</option><option value="debt">Debt/Partial</option><option value="cancelled">Cancelled</option><option value="refunded">Refunded</option></select>
-      <input type="date" value={filters.date} onChange={(event) => setFilters({ ...filters, date: event.target.value })} />
-      <IconButton icon={faFilter} label="Filter Folio" type="submit" title="Filter Folio" variant="primary" />
+    <section className="pos-kpi-row" aria-label="Ringkasan P.O.S"><div className="card"><h3>Total Open</h3><p>{pageStats.open}</p></div><div className="card"><h3>Total Close</h3><p>{pageStats.close}</p></div><div className="card"><h3>Total Balance / Outstanding</h3><p>{money.format(pageStats.balance)}</p></div></section>
+
+    <form className="card filter-grid pos-filter-bar" onSubmit={(event) => { event.preventDefault(); load('', filters); }}>
+      <label>Tanggal dari<input type="date" value={filters.dateFrom} onChange={(event) => setFilters({ ...filters, dateFrom: event.target.value })} /></label>
+      <label>Tanggal sampai<input type="date" value={filters.dateTo} onChange={(event) => setFilters({ ...filters, dateTo: event.target.value })} /></label>
+      <label>Status<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="all">All</option><option value="open">Open</option><option value="close">Close</option></select></label>
+      <label className="wide-filter">Search<input placeholder="No folio / no bill / nama / kamar" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} /></label>
+      <div className="button-row"><IconButton icon={faFilter} label="Apply Filter" type="submit" title="Apply Filter" variant="primary" disabled={loading} /><button type="button" className="secondary" onClick={resetFilters} disabled={loading}>Reset Filter</button></div>
     </form>
 
-    <div className="pos-layout">
-      <div className="page-stack">
-        <div className="card table-card"><h2>Pilih Folio</h2>{loading ? <p>Memuat folio...</p> : folios.length === 0 ? <p className="muted">Tidak ada folio sesuai filter.</p> : <table><thead><tr><th>Folio</th><th>Tamu</th><th>Kamar</th><th>Status</th><th>Balance</th></tr></thead><tbody>{folios.map((folio) => <tr key={folio.id} className={selectedId === folio.id ? 'selected-row' : ''} onClick={() => selectFolio(folio.id)}><td>{folio.folio_number || '-'}</td><td>{folio.guests?.full_name || '-'}</td><td>{(folio.reservations || []).map((reservation) => reservation.rooms?.room_number).filter(Boolean).join(', ') || '-'}</td><td><span className={`badge ${folio.status}`}>{folio.status || '-'}</span></td><td>{money.format(folio.balance_due || 0)}</td></tr>)}</tbody></table>}</div>
-        {!selected ? <div className="card muted">Pilih folio terlebih dahulu.</div> : <>
-          <section className="card pos-summary-card"><div><span>No Folio</span><strong>{selected.folio_number || '-'}</strong></div><div><span>Tamu</span><strong>{selected.guests?.full_name || '-'}</strong></div><div><span>Kamar</span><strong>{roomText}</strong></div><div><span>Check-in/out</span><strong>{firstReservation.check_in_date || '-'} / {firstReservation.check_out_date || '-'}</strong></div><div><span>Grand Total</span><strong>{money.format(selected.grand_total || 0)}</strong></div><div><span>Total Paid</span><strong>{money.format(selected.paid_amount || 0)}</strong></div><div><span>Balance</span><strong>{money.format(selected.balance_due || 0)}</strong></div><div><span>Status</span><strong>{selected.status || '-'}</strong></div></section>
-          <div className="grid pos-settlement-grid"><div className="card"><h3>Total Charge</h3><p>{money.format(settlement.totalCharge)}</p></div><div className="card"><h3>Total Adjustment</h3><p>{money.format(settlement.totalAdjustment)}</p></div><div className="card"><h3>Total Payment</h3><p>{money.format(settlement.totalPayment)}</p></div><div className="card"><h3>Total Refund</h3><p>{money.format(settlement.totalRefund)}</p></div></div>
-          <LedgerTable rows={ledger} />
-        </>}
-      </div>
+    <div className="card table-card compact-pos-table"><div className="action-bar"><div><h2>Daftar Folio / Bill</h2><p className="muted">Pilih Detail atau Bayar untuk membuka panel transaksi.</p></div></div>{loading ? <p>Memuat transaksi...</p> : folios.length === 0 ? <p className="muted">Tidak ada transaksi pada filter ini.</p> : <table><thead><tr><th>Tanggal</th><th>No Folio</th><th>No Bill</th><th>Nama Tamu</th><th>Kamar</th><th>Grand Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Action</th></tr></thead><tbody>{folios.map((folio) => <tr key={folio.id} className={selectedId === folio.id ? 'selected-row' : ''}><td>{formatDate(folio.folio_payments?.[0]?.paid_at || folio.created_at)}</td><td>{folio.folio_number || '-'}</td><td>{folio.folio_payments?.find((payment) => payment.bill_no)?.bill_no || '-'}</td><td>{folio.guests?.full_name || '-'}</td><td>{(folio.reservations || []).map((reservation) => reservation.rooms?.room_number).filter(Boolean).join(', ') || '-'}</td><td>{money.format(folio.grand_total || 0)}</td><td>{money.format(folio.paid_amount || 0)}</td><td>{money.format(folio.balance_due || 0)}</td><td><span className={`badge ${normalizePOSStatus(folio.status).toLowerCase()}`}>{normalizePOSStatus(folio.status)}</span></td><td><div className="table-actions"><button className="secondary" onClick={() => selectFolio(folio.id, 'summary')}>Detail</button>{canTransact && Number(folio.balance_due || 0) > 0 && <button onClick={() => selectFolio(folio.id, 'payment')}>Bayar</button>}<IconButton icon={faPrint} title="Print Bill / Receipt" onClick={() => selectFolio(folio.id, 'history')} /></div></td></tr>)}</tbody></table>}</div>
 
-      <aside className="page-stack">
-        <div className="card"><h2>Input Payment</h2>{!canTransact && <p className="muted">Role Anda read-only untuk transaksi kasir.</p>}<form className="form-grid" onSubmit={submitPayment}><label className="full">Folio<input disabled value={selected?.folio_number || 'Pilih folio'} /></label><label>Nominal<input type="number" min="1" max={selected?.balance_due || undefined} required value={payment.amount} onChange={(event) => updatePayment({ amount: event.target.value })} /></label><label>Metode<select required value={payment.payment_method} onChange={(event) => updatePayment({ payment_method: event.target.value })}>{paymentMethods.map((method) => <option key={method} value={method}>{method}</option>)}</select></label><label>Tanggal/Jam<input type="datetime-local" value={payment.paid_at} onChange={(event) => updatePayment({ paid_at: event.target.value })} /></label>{nonCash && <label>No Referensi<input required value={payment.reference_number} onChange={(event) => updatePayment({ reference_number: event.target.value })} /></label>}<label className="full">Catatan<textarea value={payment.notes} onChange={(event) => updatePayment({ notes: event.target.value })} /></label><button disabled={!canTransact || saving === 'payment' || !selected}>{saving === 'payment' ? 'Posting...' : 'Submit Payment'}</button></form></div>
-        {canTransact && <div className="card"><h2>Adjustment / Refund / Correction</h2><form className="form-grid" onSubmit={submitAdjustment}><label>Tipe<select value={adjustment.adjustment_type} onChange={(event) => setAdjustment({ ...adjustment, adjustment_type: event.target.value })}><option value="cancellation_fee">Cancellation</option><option value="refund">Refund</option><option value="correction">Correction</option><option value="discount_adjustment">Discount Adjustment</option><option value="other_adjustment">Other Adjustment</option></select></label><label>Nominal Minus<input type="number" max="-1" required value={adjustment.amount} onChange={(event) => setAdjustment({ ...adjustment, amount: event.target.value })} placeholder="-100000" /></label><label>Tanggal<input type="date" value={adjustment.posting_date} onChange={(event) => setAdjustment({ ...adjustment, posting_date: event.target.value })} /></label><label className="full">Keterangan<textarea required value={adjustment.notes} onChange={(event) => setAdjustment({ ...adjustment, notes: event.target.value })} /></label><button className="danger" disabled={saving === 'adjustment' || !selected}>{saving === 'adjustment' ? 'Posting...' : 'Posting Nominal Minus'}</button></form></div>}
-        <div className="card"><div className="action-bar"><div><h2>Shift Hari Ini</h2><p className="muted">Ringkasan collection per metode.</p></div><input type="date" value={shiftDate} onChange={(event) => setShiftDate(event.target.value)} /></div><div className="detail-list"><p><strong>Cash</strong><br />{money.format(shift?.cash || 0)}</p><p><strong>Transfer</strong><br />{money.format(shift?.transfer || 0)}</p><p><strong>QRIS</strong><br />{money.format(shift?.qris || 0)}</p><p><strong>Debit / Credit</strong><br />{money.format((shift?.debit || 0) + (shift?.credit || 0))}</p><p><strong>Refund</strong><br />{money.format(shift?.refund || 0)}</p><p><strong>Net Collection</strong><br />{money.format(shift?.net || 0)}</p></div></div>
-      </aside>
-    </div>
+    {!selected ? <div className="card muted">Pilih folio/bill terlebih dahulu.</div> : <section className="card pos-detail-panel"><div className="action-bar"><div><h2>{selected.folio_number || '-'}</h2><p className="muted">{selected.guests?.full_name || '-'} · Kamar {roomText} · {normalizePOSStatus(selected.status)}</p></div><div className="button-row"><button className={activePanel === 'summary' ? '' : 'secondary'} onClick={() => setActivePanel('summary')}>Summary</button><button className={activePanel === 'payment' ? '' : 'secondary'} onClick={() => setActivePanel('payment')}>Payment</button><button className={activePanel === 'history' ? '' : 'secondary'} onClick={() => setActivePanel('history')}>History</button>{canTransact && <button className={activePanel === 'adjustment' ? 'danger' : 'secondary'} onClick={() => setActivePanel('adjustment')}>Adjustment</button>}</div></div>
+      {activePanel === 'summary' && <div className="pos-summary-card compact"><div><span>No Folio</span><strong>{selected.folio_number || '-'}</strong></div><div><span>Check-in/out</span><strong>{firstReservation.check_in_date || '-'} / {firstReservation.check_out_date || '-'}</strong></div><div><span>Grand Total</span><strong>{money.format(selected.grand_total || 0)}</strong></div><div><span>Total Paid</span><strong>{money.format(selected.paid_amount || 0)}</strong></div><div><span>Balance</span><strong>{money.format(selected.balance_due || 0)}</strong></div><div><span>Status</span><strong>{normalizePOSStatus(selected.status)}</strong></div></div>}
+      {activePanel === 'payment' && <PaymentPanel selected={selected} payment={payment} nonCash={nonCash} canTransact={canTransact} saving={saving} onPayment={updatePayment} onSubmit={submitPayment} />}
+      {activePanel === 'history' && <div className="two-column"><HistoryTable title="Payment History" rows={payments} /><HistoryTable title="Adjustment / Refund History" rows={adjustments} adjustment /></div>}
+      {activePanel === 'adjustment' && canTransact && <AdjustmentPanel adjustment={adjustment} saving={saving} onChange={setAdjustment} onSubmit={submitAdjustment} />}
+    </section>}
     {receipt && <ReceiptModal receipt={receipt} onClose={() => setReceipt(null)} />}
   </div>;
 }
 
-function LedgerTable({ rows }) {
-  return <div className="card table-card"><h2>Ledger / Tagihan & Payment History</h2>{rows.length === 0 ? <p className="muted">Belum ada tagihan atau transaksi pembayaran.</p> : <table><thead><tr><th>No Bill</th><th>Tanggal</th><th>Tipe</th><th>Deskripsi</th><th>Debit/Charge</th><th>Credit/Payment</th><th>Metode</th><th>Keterangan</th><th>Status</th></tr></thead><tbody>{rows.map((row) => <tr key={`${row.source}-${row.id}`}><td>{row.bill_no}</td><td>{row.date || '-'}</td><td>{row.type || '-'}</td><td>{row.description || '-'}</td><td>{money.format(row.debit || 0)}</td><td>{money.format(row.credit || 0)}</td><td>{row.method || '-'}</td><td>{row.notes || '-'}</td><td><span className={`badge ${row.status}`}>{row.status || '-'}</span></td></tr>)}</tbody></table>}</div>;
+function PaymentPanel({ selected, payment, nonCash, canTransact, saving, onPayment, onSubmit }) {
+  return <form className="form-grid pos-form-panel" onSubmit={onSubmit}><label>Folio<input disabled value={selected?.folio_number || 'Pilih folio'} /></label><label>Balance<input disabled value={money.format(selected?.balance_due || 0)} /></label><label>Nominal<input type="number" min="1" max={selected?.balance_due || undefined} required value={payment.amount} onChange={(event) => onPayment({ amount: event.target.value })} /></label><label>Metode<select required value={payment.payment_method} onChange={(event) => onPayment({ payment_method: event.target.value })}>{paymentMethods.map((method) => <option key={method} value={method}>{method}</option>)}</select></label><label>Tanggal/Jam<input type="datetime-local" value={payment.paid_at} onChange={(event) => onPayment({ paid_at: event.target.value })} /></label>{nonCash && <label>No Referensi<input required value={payment.reference_number} onChange={(event) => onPayment({ reference_number: event.target.value })} /></label>}<label className="full">Catatan<textarea value={payment.notes} onChange={(event) => onPayment({ notes: event.target.value })} /></label><div className="button-row full"><button disabled={!canTransact || saving === 'payment' || !selected}>{saving === 'payment' ? 'Posting...' : 'Submit Payment'}</button>{!canTransact && <span className="muted">Role Anda read-only untuk transaksi kasir.</span>}</div></form>;
+}
+
+function AdjustmentPanel({ adjustment, saving, onChange, onSubmit }) {
+  return <form className="form-grid pos-form-panel" onSubmit={onSubmit}><label>Tipe<select value={adjustment.adjustment_type} onChange={(event) => onChange({ ...adjustment, adjustment_type: event.target.value })}><option value="cancellation_fee">Cancellation</option><option value="refund">Refund</option><option value="correction">Correction</option><option value="discount_adjustment">Discount Adjustment</option><option value="other_adjustment">Other Adjustment</option></select></label><label>Nominal Minus<input type="number" max="-1" required value={adjustment.amount} onChange={(event) => onChange({ ...adjustment, amount: event.target.value })} placeholder="-100000" /></label><label>Tanggal<input type="date" value={adjustment.posting_date} onChange={(event) => onChange({ ...adjustment, posting_date: event.target.value })} /></label><label className="full">Keterangan<textarea required value={adjustment.notes} onChange={(event) => onChange({ ...adjustment, notes: event.target.value })} /></label><button className="danger" disabled={saving === 'adjustment'}>{saving === 'adjustment' ? 'Posting...' : 'Posting Nominal Minus'}</button></form>;
+}
+
+function HistoryTable({ title, rows, adjustment = false }) {
+  return <div className="table-card"><h3>{title}</h3>{rows.length === 0 ? <p className="muted">Tidak ada transaksi pembayaran.</p> : <table><thead><tr><th>{adjustment ? 'Tanggal' : 'No Bill'}</th><th>Tipe</th><th>Nominal</th><th>Metode</th><th>Keterangan</th><th>Status</th></tr></thead><tbody>{rows.map((row) => <tr key={`${row.source}-${row.id}`}><td>{adjustment ? row.date : row.bill_no}</td><td>{row.type || '-'}</td><td>{money.format(row.credit || row.debit || 0)}</td><td>{row.method || '-'}</td><td>{row.notes || row.description || '-'}</td><td><span className={`badge ${row.status}`}>{row.status || '-'}</span></td></tr>)}</tbody></table>}</div>;
 }
 
 function ReceiptModal({ receipt, onClose }) {
   const { folio, payment } = receipt;
   const amount = Number(payment?.amount || 0);
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="modal-card receipt-card" role="dialog" aria-modal="true"><div className="modal-header"><div><p className="eyebrow">Receipt</p><h2>{payment?.bill_no || '-'}</h2></div><button className="modal-close" onClick={onClose}>×</button></div><div className="receipt-body"><p><strong>Hotel MS</strong></p><p>No Folio: {folio?.folio_number || '-'}</p><p>Tamu: {folio?.guests?.full_name || '-'}</p><p>Tanggal: {String(payment?.paid_at || '').slice(0, 16).replace('T', ' ')}</p><p>Metode: {payment?.payment_method || '-'}</p><p>Nominal: {money.format(amount)}</p><p>Balance Setelah Payment: {money.format(folio?.balance_due || 0)}</p><p>Catatan: {payment?.notes || '-'}</p></div><div className="modal-footer"><IconButton icon={faPrint} label="Print Receipt" title="Print Receipt" onClick={() => window.print()} /><button className="secondary" onClick={onClose}>Close</button></div></section></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="modal-card receipt-card" role="dialog" aria-modal="true"><div className="modal-header"><div><p className="eyebrow">Receipt</p><h2>{payment?.bill_no || '-'}</h2></div><button className="modal-close" onClick={onClose}>×</button></div><div className="receipt-body"><p><strong>Hotel MS</strong></p><p>No Folio: {folio?.folio_number || '-'}</p><p>Tamu: {folio?.guests?.full_name || '-'}</p><p>Tanggal: {String(payment?.paid_at || '').slice(0, 16).replace('T', ' ')}</p><p>Metode: {payment?.payment_method || '-'}</p><p>Nominal: {money.format(amount)}</p><p>Balance Setelah Payment: {money.format(folio?.balance_due || 0)}</p><p>Catatan: {payment?.notes || '-'}</p></div><div className="modal-footer"><IconButton icon={faReceipt} label="Print Receipt" title="Print Receipt" onClick={() => window.print()} /><button className="secondary" onClick={onClose}>Close</button></div></section></div>;
 }
