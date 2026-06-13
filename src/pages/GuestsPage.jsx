@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { guestsApi } from '../services/api';
 import IconButton from '../components/IconButton';
+import { FrontOfficeSubnav } from '../components/ModuleSubnav';
 import { faFilter, faPenToSquare, faTrash } from '@fortawesome/free-solid-svg-icons';
 
 const emptyForm = { full_name: '', nik: '', phone: '', email: '', address: '', city: '', birth_date: '', gender: '', notes: '', is_blacklisted: false, is_active: true };
@@ -79,6 +80,7 @@ export default function GuestsPage() {
 
   return <div className="page-stack">
     <div className="page-header"><div><h1>Tamu</h1><p>Database tamu lengkap dengan pencarian nama, NIK, dan nomor HP.</p></div></div>
+    <FrontOfficeSubnav activeLabel="Guest Database" />
     {error && <div className="alert error">{error}</div>}
     <div className="two-column">
       <form className="card form-grid" onSubmit={submit}>
