@@ -1,0 +1,15 @@
+<svg width="420" height="260" viewBox="0 0 420 260" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Hotel report illustration</title>
+  <desc id="desc">Analytics dashboard with charts and revenue card.</desc>
+  <rect width="420" height="260" rx="36" fill="#EDE9FE"/>
+  <rect x="74" y="58" width="252" height="154" rx="22" fill="#312E81"/>
+  <rect x="96" y="84" width="84" height="44" rx="12" fill="#8B5CF6"/>
+  <rect x="196" y="84" width="108" height="44" rx="12" fill="#A78BFA"/>
+  <rect x="96" y="146" width="34" height="42" rx="8" fill="#FACC15"/>
+  <rect x="144" y="128" width="34" height="60" rx="8" fill="#60A5FA"/>
+  <rect x="192" y="112" width="34" height="76" rx="8" fill="#34D399"/>
+  <path d="M248 178c0-28 22-50 50-50v50h-50Z" fill="#F8FAFC"/>
+  <path d="M304 134a50 50 0 0 1 44 44h-44v-44Z" fill="#C4B5FD"/>
+  <circle cx="322" cy="70" r="28" fill="#7C3AED" opacity="0.8"/>
+  <path d="M104 208h238" stroke="#8B5CF6" stroke-width="12" stroke-linecap="round"/>
+</svg>

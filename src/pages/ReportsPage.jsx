@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { reportsApi, today } from '../services/api';
 
 const money = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 });
 const addDays = (days) => { const date = new Date(); date.setDate(date.getDate() + days); return date.toISOString().slice(0, 10); };
 
 export default function ReportsPage() {
-  const [tab, setTab] = useState('occupancy');
+  const [tab, setTab] = useState('dashboard');
   const [filters, setFilters] = useState({ startDate: today(), endDate: addDays(7) });
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -30,9 +31,10 @@ export default function ReportsPage() {
     <div className="page-header"><div><h1>Reports</h1><p>Laporan occupancy, revenue, arrival/departure, payment, dan room status.</p></div></div>
     {error && <div className="alert error">{error}</div>}
     <form className="card inline-form forecast-filter" onSubmit={(e) => { e.preventDefault(); load(); }}><label>Mulai<input type="date" value={filters.startDate} onChange={(e) => setFilters({ ...filters, startDate: e.target.value })} /></label><label>Selesai<input type="date" value={filters.endDate} onChange={(e) => setFilters({ ...filters, endDate: e.target.value })} /></label><button>Apply</button></form>
-    <div className="button-row"><button className={tab === 'occupancy' ? '' : 'secondary'} onClick={() => setTab('occupancy')}>Occupancy</button><button className={tab === 'revenue' ? '' : 'secondary'} onClick={() => setTab('revenue')}>Revenue/Payment</button><button className={tab === 'methods' ? '' : 'secondary'} onClick={() => setTab('methods')}>Payment Method</button><button className={tab === 'arrival' ? '' : 'secondary'} onClick={() => setTab('arrival')}>Arrival/Departure</button><button className={tab === 'room' ? '' : 'secondary'} onClick={() => setTab('room')}>Room Status</button></div>
+    <div className="button-row module-tabs"><button className={tab === 'dashboard' ? '' : 'secondary'} onClick={() => setTab('dashboard')}>Dashboard</button><Link className="button-link secondary-link" to="/forecast">Forecast</Link><button className={tab === 'occupancy' ? '' : 'secondary'} onClick={() => setTab('occupancy')}>Occupancy</button><button className={tab === 'revenue' ? '' : 'secondary'} onClick={() => setTab('revenue')}>Revenue</button><button className={tab === 'methods' ? '' : 'secondary'} onClick={() => setTab('methods')}>Payment</button><button className={tab === 'arrival' ? '' : 'secondary'} onClick={() => setTab('arrival')}>Arrival/Departure</button></div>
     {loading && <div className="card">Memuat laporan...</div>}
     {!loading && !report && <div className="card muted">Data laporan belum tersedia.</div>}
+    {!loading && report && tab === 'dashboard' && <div className="grid"><div className="card"><h3>Average Occupancy</h3><p>{Math.round((report.occupancy.reduce((total, row) => total + Number(row.occupancy_percentage || 0), 0) / Math.max(report.occupancy.length, 1)) || 0)}%</p></div><div className="card"><h3>Revenue</h3><p>{money.format(report.revenue.payment_collected)}</p></div><div className="card"><h3>Payment Methods</h3><p>{(report.revenue.payment_methods || []).filter((row) => row.amount > 0).length}</p></div><div className="card"><h3>Arrival / Departure</h3><p>{report.arrivalsDepartures.expected_arrival} / {report.arrivalsDepartures.expected_departure}</p></div></div>}
     {!loading && report && tab === 'occupancy' && <div className="card table-card"><h2>Occupancy Report</h2><table><thead><tr><th>Date</th><th>Total</th><th>Inventory</th><th>Occupied</th><th>Available</th><th>Occ %</th></tr></thead><tbody>{report.occupancy.map((row) => <tr key={row.date}><td>{row.date}</td><td>{row.total_rooms}</td><td>{row.inventory_rooms}</td><td>{row.occupied_rooms}</td><td>{row.available_rooms}</td><td>{row.occupancy_percentage}%</td></tr>)}</tbody></table></div>}
     {!loading && report && tab === 'revenue' && <div className="grid"><div className="card"><h3>Folio grand total</h3><p>{money.format(report.revenue.invoice_total)}</p></div><div className="card"><h3>Payment collected</h3><p>{money.format(report.revenue.payment_collected)}</p></div><div className="card"><h3>Outstanding/Debt</h3><p>{money.format(report.revenue.outstanding_balance)}</p></div><div className="card"><h3>Refund total</h3><p>{money.format(report.revenue.refund_total || 0)}</p></div><div className="card"><h3>Cancellation/No-show fee</h3><p>{money.format(report.revenue.cancellation_total || 0)}</p></div></div>}
     {!loading && report && tab === 'methods' && <div className="card table-card"><h2>Payment Method Report</h2><table><thead><tr><th>Method</th><th>Amount</th></tr></thead><tbody>{(report.revenue.payment_methods || []).map((row) => <tr key={row.method}><td>{row.method}</td><td>{money.format(row.amount || 0)}</td></tr>)}</tbody></table></div>}
