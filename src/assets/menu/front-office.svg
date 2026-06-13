@@ -1,0 +1,16 @@
+<svg width="420" height="260" viewBox="0 0 420 260" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Front office hotel illustration</title>
+  <desc id="desc">Modern reception desk with guest card and key.</desc>
+  <rect width="420" height="260" rx="36" fill="#DBEAFE"/>
+  <circle cx="335" cy="56" r="38" fill="#93C5FD" opacity="0.75"/>
+  <rect x="76" y="78" width="158" height="98" rx="18" fill="#1D4ED8"/>
+  <rect x="95" y="99" width="120" height="14" rx="7" fill="#BFDBFE"/>
+  <rect x="95" y="127" width="86" height="12" rx="6" fill="#60A5FA"/>
+  <rect x="54" y="160" width="230" height="44" rx="16" fill="#0F172A"/>
+  <path d="M275 118h70a18 18 0 0 1 18 18v68h-106v-68a18 18 0 0 1 18-18Z" fill="#2563EB"/>
+  <circle cx="310" cy="88" r="30" fill="#F8FAFC"/>
+  <path d="M287 91c10 15 34 15 46 0v18c-13 12-35 12-46 0V91Z" fill="#93C5FD"/>
+  <rect x="296" y="140" width="28" height="44" rx="14" fill="#BFDBFE"/>
+  <path d="M288 204h48" stroke="#60A5FA" stroke-width="10" stroke-linecap="round"/>
+  <rect x="112" y="200" width="244" height="16" rx="8" fill="#60A5FA"/>
+</svg>
