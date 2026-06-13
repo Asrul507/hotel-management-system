@@ -32,6 +32,7 @@ export default function AppLayout() {
           {canAccess(profile?.role, 'frontOffice') && <Link className={location.pathname === '/front-office' ? 'active' : ''} to="/front-office">Front Office</Link>}
           {canAccess(profile?.role, 'housekeeping') && <Link className={location.pathname === '/housekeeping' ? 'active' : ''} to="/housekeeping">Housekeeping</Link>}
           {canAccess(profile?.role, 'reports') && <Link className={location.pathname === '/reports' ? 'active' : ''} to="/reports">Report</Link>}
+          {canAccess(profile?.role, 'pos') && <Link className={location.pathname === '/pos' ? 'active' : ''} to="/pos">P.O.S / Kasir</Link>}
         </nav>
         <div className="topbar-actions">
           <small className="user-chip">{profile?.full_name} <span>{profile?.role}</span></small>

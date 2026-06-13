@@ -9,6 +9,7 @@ import GuestsPage from './pages/GuestsPage';
 import ForecastPage from './pages/ForecastPage';
 import FrontOfficePage from './pages/FrontOfficePage';
 import BillingPage from './pages/BillingPage';
+import PosPage from './pages/PosPage';
 import HousekeepingPage from './pages/HousekeepingPage';
 import MaintenancePage from './pages/MaintenancePage';
 import ReportsPage from './pages/ReportsPage';
@@ -46,6 +47,7 @@ export default function App() {
       <Route path="/reservations" element={<Navigate to="/front-office" replace />} />
       <Route path="/checkin" element={<Navigate to="/front-office" replace />} />
       <Route path="/billing" element={allowed('billing', <BillingPage />)} />
+      <Route path="/pos" element={allowed('pos', <PosPage />)} />
       <Route path="/housekeeping" element={allowed('housekeeping', <HousekeepingPage />)} />
       <Route path="/maintenance" element={allowed('maintenance', <MaintenancePage />)} />
       <Route path="/reports" element={allowed('reports', <ReportsPage />)} />

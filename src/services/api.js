@@ -19,7 +19,7 @@ export const PAYMENT_GROUPS = ['cash', 'non_tunai'];
 export const NON_CASH_METHODS = ['qris', 'transfer', 'debit_card', 'credit_card', 'e_wallet', 'other'];
 export const PAYMENT_METHODS = ['cash', ...NON_CASH_METHODS];
 export const FOLIO_STATUSES = ['open', 'closed', 'cancelled', 'debt', 'refunded', 'partial_refund'];
-export const FOLIO_ITEM_TYPES = ['room', 'extra_bed', 'breakfast', 'early_checkin', 'late_checkout', 'restaurant', 'laundry', 'minibar', 'other', 'discount', 'cancellation_fee', 'no_show_fee', 'refund', 'adjustment'];
+export const FOLIO_ITEM_TYPES = ['room', 'extra_bed', 'breakfast', 'early_checkin', 'late_checkout', 'restaurant', 'laundry', 'minibar', 'other', 'discount', 'cancellation_fee', 'no_show_fee', 'refund', 'adjustment', 'correction', 'discount_adjustment', 'other_adjustment'];
 export const ADDITIONAL_CHARGE_TYPES = [
   ['extra_bed', 'Extra Bed'],
   ['breakfast', 'Breakfast'],
@@ -35,6 +35,7 @@ export const today = () => new Date().toISOString().slice(0, 10);
 const reservationCode = () => `RSV-${Date.now()}`;
 const invoiceNumber = (prefix = 'INV') => `${prefix || 'INV'}-${Date.now()}`;
 const folioNumber = () => `FOL-${Date.now()}`;
+const billDatePart = (value = new Date()) => value.toISOString().slice(0, 10).replaceAll('-', '');
 const moneyValue = (value) => Number(value || 0);
 export const isOutOfInventoryHk = isOutOfInventoryStatus;
 export const isOccupiedHk = isOccupiedStatus;
@@ -688,7 +689,9 @@ function validateFolioItemPayload(folioId, payload) {
   const qty = Number(payload.qty);
   const unitPrice = payload.unit_price === '' || payload.unit_price == null ? NaN : Number(payload.unit_price);
   if (!Number.isFinite(qty) || qty <= 0) throw new Error('Qty harus angka lebih dari 0.');
-  if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error('Unit price harus angka minimal 0.');
+  const minusTypes = ['adjustment', 'correction', 'discount_adjustment', 'other_adjustment', 'refund', 'cancellation_fee'];
+  if (!Number.isFinite(unitPrice) || unitPrice === 0) throw new Error('Nominal item tidak boleh 0.');
+  if (unitPrice < 0 && !minusTypes.includes(itemType)) throw new Error('Nominal minus hanya untuk adjustment/refund/correction/cancellation.');
   const postingDate = payload.posting_date || today();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(postingDate)) throw new Error('Posting date harus format YYYY-MM-DD.');
   return {
@@ -705,6 +708,18 @@ function validateFolioItemPayload(folioId, payload) {
 
 function assertSuperAdmin(role) {
   if (role !== 'super_admin') throw new Error('Hanya super admin yang boleh edit/hapus transaksi.');
+}
+
+async function nextBillNumber() {
+  const prefix = `BILL-${billDatePart()}-`;
+  const { data } = await requireSupabase().from('folio_payments').select('bill_no').ilike('bill_no', `${prefix}%`).order('bill_no', { ascending: false }).limit(1);
+  const latest = data?.[0]?.bill_no || '';
+  const current = Number(latest.split('-').pop() || 0);
+  return `${prefix}${String((Number.isFinite(current) ? current : 0) + 1).padStart(4, '0')}`;
+}
+
+function assertPosCashier(role) {
+  if (!['admin', 'super_admin'].includes(role)) throw new Error('Hanya admin/super admin yang boleh memproses transaksi P.O.S.');
 }
 
 export const foliosApi = {
@@ -750,8 +765,8 @@ export const foliosApi = {
     const payments = folio.folio_payments || [];
     const itemTotal = (item) => moneyValue(item.line_total ?? (moneyValue(item.qty) * moneyValue(item.unit_price)));
     const chargeSubtotal = items
-      .filter((item) => !['discount', 'refund'].includes(item.item_type))
-      .reduce((sum, item) => sum + Math.max(itemTotal(item), 0), 0);
+      .filter((item) => item.item_type !== 'discount')
+      .reduce((sum, item) => sum + itemTotal(item), 0);
     const discountPercent = Math.min(Math.max(moneyValue(folio.discount_percent), 0), 100);
     const manualDiscount = items.filter((item) => item.item_type === 'discount').reduce((sum, item) => sum + Math.abs(itemTotal(item)), 0);
     const discountAmount = Math.min(chargeSubtotal, (chargeSubtotal * discountPercent / 100) + manualDiscount);
@@ -883,12 +898,16 @@ export const foliosApi = {
     const { paymentGroup, paymentMethod, amount } = validatePaymentPayload(payload);
     const folio = await this.getFolio(folioId);
     if (payload.payment_type !== 'refund' && amount > moneyValue(folio.balance_due)) throw new Error('Payment melebihi balance due.');
+    const billNo = payload.bill_no || await nextBillNumber();
     const { data, error } = await requireSupabase().from('folio_payments').insert({
       folio_id: folioId,
       payment_type: payload.payment_type || 'payment',
       payment_group: paymentGroup,
       payment_method: paymentMethod,
       amount,
+      bill_no: billNo,
+      cashier_id: payload.cashier_id || null,
+      payment_status: payload.payment_status || 'posted',
       reference_number: payload.reference_number || null,
       card_or_account_number: payload.card_or_account_number || null,
       notes: payload.notes || null,
@@ -896,7 +915,7 @@ export const foliosApi = {
     }).select('*').single();
     if (error) throw new Error(parsePgError(error, 'Gagal menyimpan payment folio.'));
     const updated = await this.recalculateFolioTotals(folioId, payload.payment_type === 'refund' ? 'refunded' : '');
-    await logAuditEvent(payload.payment_type === 'refund' ? 'refund_folio' : 'add_folio_payment', 'folio_payments', data.id, payload);
+    await logAuditEvent(payload.payment_type === 'refund' ? 'refund_folio' : 'add_folio_payment', 'folio_payments', data.id, { ...payload, bill_no: billNo });
     return updated;
   },
   async updateDiscount(folioId, discount_percent, role = '') {
@@ -944,6 +963,103 @@ export const foliosApi = {
     if (fee <= 0) return null;
     const folio = await this.ensureForReservation(reservation);
     return this.addFolioItem(folio.id, { reservation_id: reservation.id, item_type: 'no_show_fee', description: `No-show fee ${reservation.reservation_code}`, qty: 1, unit_price: fee });
+  }
+};
+
+
+export const posApi = {
+  async listFolios(filters = {}) {
+    const rows = await foliosApi.list({ status: filters.status || 'all', search: filters.search || '' });
+    const roomSearch = filters.room?.trim()?.toLowerCase();
+    const date = filters.date || '';
+    return rows.filter((folio) => {
+      const reservations = folio.reservations || [];
+      const roomOk = !roomSearch || reservations.some((reservation) => reservation.rooms?.room_number?.toLowerCase().includes(roomSearch));
+      const dateOk = !date || reservations.some((reservation) => reservation.check_in_date <= date && reservation.check_out_date >= date);
+      return roomOk && dateOk;
+    });
+  },
+  async getFolio(folioId) {
+    if (!folioId) throw new Error('Pilih folio terlebih dahulu.');
+    return foliosApi.getFolio(folioId);
+  },
+  buildLedger(folio) {
+    const items = (folio?.folio_items || []).filter((item) => item.is_void !== true).map((item) => {
+      const amount = moneyValue(item.line_total ?? moneyValue(item.qty) * moneyValue(item.unit_price));
+      return {
+        id: item.id,
+        source: 'charge',
+        bill_no: '-',
+        date: item.posting_date || String(item.created_at || '').slice(0, 10),
+        type: item.item_type || 'charge',
+        description: item.description || '-',
+        debit: amount > 0 ? amount : 0,
+        credit: amount < 0 ? Math.abs(amount) : 0,
+        amount,
+        method: '-',
+        notes: item.void_reason || '-',
+        status: item.is_void ? 'void' : 'posted'
+      };
+    });
+    const payments = (folio?.folio_payments || []).map((payment) => {
+      const amount = moneyValue(payment.amount);
+      const isRefund = payment.payment_type === 'refund';
+      return {
+        id: payment.id,
+        source: 'payment',
+        bill_no: payment.bill_no || payment.reference_number || '-',
+        date: String(payment.paid_at || payment.created_at || '').slice(0, 16).replace('T', ' '),
+        type: isRefund ? 'refund_payment' : 'payment',
+        description: isRefund ? 'Refund payment' : 'Payment',
+        debit: isRefund ? amount : 0,
+        credit: isRefund ? 0 : amount,
+        amount: isRefund ? amount : -amount,
+        method: payment.payment_method || '-',
+        notes: payment.notes || '-',
+        status: payment.payment_status || 'posted'
+      };
+    });
+    return [...items, ...payments].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  },
+  settlement(folio) {
+    const items = (folio?.folio_items || []).filter((item) => item.is_void !== true);
+    const itemTotal = (item) => moneyValue(item.line_total ?? moneyValue(item.qty) * moneyValue(item.unit_price));
+    const totalCharge = items.filter((item) => itemTotal(item) > 0).reduce((sum, item) => sum + itemTotal(item), 0);
+    const totalAdjustment = items.filter((item) => itemTotal(item) < 0).reduce((sum, item) => sum + itemTotal(item), 0);
+    const payments = folio?.folio_payments || [];
+    const totalPayment = payments.filter((payment) => payment.payment_type === 'payment').reduce((sum, payment) => sum + moneyValue(payment.amount), 0);
+    const totalRefund = payments.filter((payment) => payment.payment_type === 'refund').reduce((sum, payment) => sum + moneyValue(payment.amount), 0);
+    const grandTotal = moneyValue(folio?.grand_total ?? totalCharge + totalAdjustment);
+    const balance = moneyValue(folio?.balance_due ?? Math.max(grandTotal - totalPayment + totalRefund, 0));
+    return { totalCharge, totalAdjustment, totalPayment, totalRefund, grandTotal, balance, status: folio?.status || 'open' };
+  },
+  async postPayment(folioId, payload, role = '', cashierId = '') {
+    assertPosCashier(role);
+    if (!folioId) throw new Error('Pilih folio terlebih dahulu.');
+    if (moneyValue(payload.amount) <= 0) throw new Error('Nominal pembayaran harus lebih besar dari 0.');
+    return foliosApi.addFolioPayment(folioId, { ...payload, payment_type: 'payment', cashier_id: cashierId });
+  },
+  async postAdjustment(folioId, payload, role = '') {
+    assertPosCashier(role);
+    if (!folioId) throw new Error('Pilih folio terlebih dahulu.');
+    const amount = moneyValue(payload.amount);
+    if (amount >= 0) throw new Error('Nominal adjustment/refund/correction wajib minus.');
+    if (!payload.notes?.trim()) throw new Error('Keterangan wajib diisi untuk transaksi minus.');
+    return foliosApi.addFolioItem(folioId, {
+      item_type: payload.adjustment_type || 'adjustment',
+      description: payload.notes.trim(),
+      qty: 1,
+      unit_price: amount,
+      posting_date: payload.posting_date || today()
+    });
+  },
+  async shiftSummary(date = today()) {
+    const folios = await foliosApi.list().catch(() => []);
+    const payments = folios.flatMap((folio) => (folio.folio_payments || []).map((payment) => ({ ...payment, folio })));
+    const todayRows = payments.filter((payment) => String(payment.paid_at || '').slice(0, 10) === date);
+    const sum = (method) => todayRows.filter((payment) => payment.payment_method === method && payment.payment_type === 'payment').reduce((total, payment) => total + moneyValue(payment.amount), 0);
+    const totalRefund = todayRows.filter((payment) => payment.payment_type === 'refund').reduce((total, payment) => total + moneyValue(payment.amount), 0);
+    return { rows: todayRows, cash: sum('cash'), transfer: sum('transfer'), qris: sum('qris'), debit: sum('debit_card'), credit: sum('credit_card'), refund: totalRefund, net: todayRows.filter((payment) => payment.payment_type === 'payment').reduce((total, payment) => total + moneyValue(payment.amount), 0) - totalRefund };
   }
 };
 

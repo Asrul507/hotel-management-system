@@ -213,3 +213,23 @@ Check-in / Check-out mengambil status folio terbaru, bukan invoice legacy, sehin
 3. Isi nominal pembayaran, group/metode pembayaran, tanggal pembayaran, referensi jika non-tunai, dan catatan.
 4. Pembayaran sebagian akan mengurangi balance dan status tetap debt/partial sesuai sisa tagihan; pembayaran penuh akan menutup balance dan folio akan dihitung ulang sebagai lunas/closed.
 5. Tombol submit otomatis disabled saat proses agar tidak double submit.
+
+## P.O.S / Kasir
+
+Mulai versi ini, Folio dipakai sebagai pusat tagihan dan P.O.S / Kasir dipakai sebagai pusat payment/settlement.
+
+### Cara bayar folio
+1. Buka **Folio / Billing Workspace** lalu pilih folio.
+2. Klik **Bayar di P.O.S** atau **Open P.O.S**.
+3. P.O.S akan membuka folio yang sama lewat query `folio_id`.
+4. Isi nominal, metode pembayaran, tanggal/jam, referensi jika non-tunai, dan catatan.
+5. Setelah submit, sistem membuat nomor bill format `BILL-YYYYMMDD-0001`, menyimpan payment history, dan menghitung ulang balance folio.
+
+### Correction / refund nominal minus
+1. Di P.O.S pilih folio.
+2. Gunakan form **Adjustment / Refund / Correction**.
+3. Pilih tipe transaksi, isi nominal minus seperti `-100000`, dan wajib isi keterangan.
+4. Sistem membuat line adjustment baru di folio ledger; transaksi lama tidak dihapus.
+
+### Receipt
+Setelah payment berhasil, P.O.S menampilkan receipt sederhana berisi no bill, no folio, tamu, metode, nominal, balance setelah payment, dan tombol print.

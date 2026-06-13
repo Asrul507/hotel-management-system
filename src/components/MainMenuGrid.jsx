@@ -29,6 +29,14 @@ export default function MainMenuGrid({ role, stats }) {
       image: reportIllustration,
       imageAlt: 'Ilustrasi dashboard laporan hotel',
       stats: [['OCC', `${stats.occupancyPercentage}%`], ['REV', stats.revenueShort]]
+    },
+    {
+      key: 'pos',
+      to: '/pos',
+      title: 'P.O.S / Kasir',
+      image: reportIllustration,
+      imageAlt: 'Ilustrasi kasir dan settlement hotel',
+      stats: [['Payment', stats.revenueShort], ['Status', 'Settlement']]
     }
   ];
 
