@@ -1,17 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { housekeepingApi, roomTypesApi } from '../services/api';
 import { HK_STATUSES, allowedNextHkStatuses } from '../utils/roomStatus';
 import IconButton from '../components/IconButton';
+import { useAppDialog } from '../components/AppDialog';
 import { faBroom } from '@fortawesome/free-solid-svg-icons';
 
 const normalFlow = { VD: 'VC', OD: 'OC', VC: 'VR' };
 
 export default function HousekeepingPage() {
   const { profile } = useAuth();
+  const dialog = useAppDialog();
   const [rooms, setRooms] = useState([]);
   const [roomTypes, setRoomTypes] = useState([]);
   const [selected, setSelected] = useState([]);
+  const [activeTab, setActiveTab] = useState('room_status');
   const [filters, setFilters] = useState({ hkStatus: 'all', floor: '', roomTypeId: '' });
   const [bulk, setBulk] = useState({ target_hk_status: 'VC', notes: '' });
   const [notes, setNotes] = useState({});
@@ -22,7 +26,8 @@ export default function HousekeepingPage() {
 
   const privileged = ['super_admin', 'manager'].includes(profile?.role);
   const floors = useMemo(() => [...new Set(rooms.map((room) => room.floor).filter(Boolean))], [rooms]);
-  const allSelected = rooms.length > 0 && rooms.every((room) => selected.includes(room.id));
+  const visibleRooms = activeTab === 'ooo_oos' ? rooms.filter((room) => ['OOO', 'OOS'].includes(room.hk_status)) : rooms;
+  const allSelected = visibleRooms.length > 0 && visibleRooms.every((room) => selected.includes(room.id));
   const selectedRoomsForBulk = rooms.filter((room) => selected.includes(room.id));
   const bulkStatuses = selectedRoomsForBulk.length === 0
     ? []
@@ -75,7 +80,8 @@ export default function HousekeepingPage() {
     if (selectedRooms.length === 0) return setError('Pilih minimal satu kamar.');
     if (!bulkStatuses.includes(bulk.target_hk_status)) return setError('Target HK status tidak valid untuk kombinasi kamar/role yang dipilih.');
     const fromText = filters.hkStatus === 'all' ? 'status terpilih' : filters.hkStatus;
-    if (!window.confirm(`Update ${selectedRooms.length} kamar dari ${fromText} ke ${bulk.target_hk_status}?`)) return;
+    const confirmed = await dialog.confirm({ title: 'Bulk Update Housekeeping', message: `Update ${selectedRooms.length} kamar dari ${fromText} ke ${bulk.target_hk_status}?`, confirmLabel: 'Update' });
+    if (!confirmed) return;
     setSaving('bulk');
     setError('');
     setSuccess('');
@@ -96,9 +102,10 @@ export default function HousekeepingPage() {
     <div className="page-header"><div><h1>Housekeeping</h1><p>Update HK satuan atau bulk. Role housekeeping tidak dapat mengubah FO status atau kamar FO unavailable.</p></div></div>
     {error && <div className="alert error">{error}</div>}
     {success && <div className="alert success">{success}</div>}
+    <div className="card action-toolbar module-tabs" role="toolbar" aria-label="Housekeeping tabs"><button type="button" className={`action-pill ${activeTab === 'room_status' ? 'active' : ''}`} onClick={() => setActiveTab('room_status')}>Room Status</button><button type="button" className={`action-pill ${activeTab === 'bulk_update' ? 'active' : ''}`} onClick={() => setActiveTab('bulk_update')}>Bulk Update</button><button type="button" className={`action-pill ${activeTab === 'ooo_oos' ? 'active' : ''}`} onClick={() => { setActiveTab('ooo_oos'); setFilters((current) => ({ ...current, hkStatus: 'all' })); }}>OOO/OOS</button><Link className="button-link secondary-link" to="/maintenance">Maintenance</Link></div>
     <div className="card filter-grid"><select value={filters.hkStatus} onChange={(e) => setFilters({ ...filters, hkStatus: e.target.value })}><option value="all">Semua HK</option>{HK_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}</select><select value={filters.floor} onChange={(e) => setFilters({ ...filters, floor: e.target.value })}><option value="">Semua lantai</option>{floors.map((floor) => <option key={floor} value={floor}>{floor}</option>)}</select><select value={filters.roomTypeId} onChange={(e) => setFilters({ ...filters, roomTypeId: e.target.value })}><option value="">Semua tipe</option>{roomTypes.map((type) => <option key={type.id} value={type.id}>{type.name}</option>)}</select></div>
-    <form className="card filter-grid action-toolbar" onSubmit={bulkUpdate}><strong>Bulk Update</strong><select value={bulk.target_hk_status} onChange={(e) => setBulk({ ...bulk, target_hk_status: e.target.value })}>{bulkStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select><input placeholder="Catatan bulk (wajib OOO/OOS)" value={bulk.notes} onChange={(e) => setBulk({ ...bulk, notes: e.target.value })} /><button disabled={saving === 'bulk' || selected.length === 0 || bulkStatuses.length === 0}>Apply Bulk Update ({selected.length} kamar)</button></form>
-    <div className="card table-card">{loading ? <p>Memuat kamar...</p> : rooms.length === 0 ? <p className="muted">Tidak ada kamar.</p> : <table><thead><tr><th><input type="checkbox" checked={allSelected} onChange={(e) => setSelected(e.target.checked ? rooms.map((room) => room.id) : [])} /></th><th>Kamar</th><th>Tipe/Lantai</th><th>FO</th><th>HK</th><th>Catatan</th><th>Update HK</th><th>Quick Action</th></tr></thead><tbody>{rooms.map((room) => {
+    {activeTab === 'bulk_update' && <form className="card filter-grid action-toolbar" onSubmit={bulkUpdate}><strong>Bulk Update</strong><select value={bulk.target_hk_status} onChange={(e) => setBulk({ ...bulk, target_hk_status: e.target.value })}>{bulkStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select><input placeholder="Catatan bulk (wajib OOO/OOS)" value={bulk.notes} onChange={(e) => setBulk({ ...bulk, notes: e.target.value })} /><button disabled={saving === 'bulk' || selected.length === 0 || bulkStatuses.length === 0}>Apply Bulk Update ({selected.length} kamar)</button></form>}
+    <div className="card table-card">{loading ? <p>Memuat kamar...</p> : visibleRooms.length === 0 ? <p className="muted">Tidak ada kamar.</p> : <table><thead><tr><th><input type="checkbox" checked={allSelected} onChange={(e) => setSelected(e.target.checked ? visibleRooms.map((room) => room.id) : [])} /></th><th>Kamar</th><th>Tipe/Lantai</th><th>FO</th><th>HK</th><th>Catatan</th><th>Update HK</th><th>Quick Action</th></tr></thead><tbody>{visibleRooms.map((room) => {
       const roleBlocked = ['cashier', 'receptionist'].includes(profile?.role) || (room.fo_status === 'unavailable' && !privileged);
       const currentNote = notes[room.id] || '';
       const statusOptions = allowedNextHkStatuses(room, profile?.role);

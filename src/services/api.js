@@ -49,10 +49,10 @@ function parsePgError(error, fallback) {
   const lowerDetail = detail.toLowerCase();
   if (isRateLimitError(error)) return getFriendlySupabaseError(error);
   if (error.code === '23505') return 'Data sudah ada. Periksa nomor kamar, kode, NIK, folio, atau nomor reservasi yang harus unique.';
-  if (error.code === '23514') return `${fallback} Constraint database gagal. Periksa item_type, status, tanggal, qty, dan unit price. Detail: ${detail || 'check constraint violation.'}`;
+  if (error.code === '23514') return `${fallback} Data belum sesuai. Periksa status, tanggal, qty, dan nominal.`;
   if (error.code === '23502') return `${fallback} Field wajib belum lengkap. Detail: ${detail || 'not-null violation.'}`;
-  if (error.code === '42501') return `${fallback} Akses database ditolak oleh RLS/policy. Jalankan migration RLS terbaru atau cek role user.`;
-  if (lowerDetail.includes('generated') || lowerDetail.includes('line_total')) return `${fallback} Jangan kirim kolom generated seperti line_total dari frontend.`;
+  if (error.code === '42501') return `${fallback} Akses ditolak. Pastikan role user memiliki izin untuk aksi ini.`;
+  if (lowerDetail.includes('generated') || lowerDetail.includes('line_total')) return `${fallback} Data transaksi tidak valid. Silakan muat ulang halaman lalu coba lagi.`;
   return detail || fallback;
 }
 
@@ -450,7 +450,7 @@ async function validateReservation(payload, id = '') {
     const conflict = (data || []).find((reservation) => reservation.id !== id && datesOverlap(reservation.check_in_date, reservation.check_out_date, payload.check_in_date, payload.check_out_date));
     if (conflict) throw new Error(`Double booking ditolak. Kamar sudah dipakai oleh ${conflict.reservation_code || conflict.reservation_number}.`);
     const activeStays = await staysApi.active().catch(() => []);
-    const stayConflict = activeStays.find((stay) => stay.room_id === payload.room_id && stay.status === 'checked_in');
+    const stayConflict = activeStays.find((stay) => stay.room_id === payload.room_id && stay.status === 'checked_in' && stay.reservation_id !== id);
     if (stayConflict) throw new Error('Kamar sedang in-house dan tidak boleh dipilih.');
   }
 }
@@ -532,6 +532,20 @@ export const reservationsApi = {
     if (error) throw new Error(parsePgError(error, 'Gagal memperbarui reservasi.'));
     await logAuditEvent('update_reservation', 'reservations', id, reservationPayload);
     return normalizeReservation(data);
+  },
+  async updateFromFolio(id, payload, role = '') {
+    if (!['admin', 'super_admin'].includes(role)) throw new Error('Hanya admin/super admin yang boleh edit reservasi dari Folio.');
+    const current = await this.list({ status: 'all' }).then((rows) => rows.find((row) => row.id === id));
+    if (!current) throw new Error('Reservasi tidak ditemukan.');
+    if (payload.guest_name?.trim() && current.guest_id) await guestsApi.update(current.guest_id, { ...current.guests, full_name: payload.guest_name.trim() });
+    const updated = await this.update(id, { ...current, ...payload, guest_id: current.guest_id });
+    if (updated.folio_id) await foliosApi.syncReservationRoomCharge(updated.folio_id, updated);
+    return updated;
+  },
+  async cancelFromFolio(reservation, role = '', reason = '') {
+    if (!['admin', 'super_admin'].includes(role)) throw new Error('Hanya admin/super admin yang boleh hapus/cancel reservasi dari Folio.');
+    const normalized = normalizeReservation(reservation);
+    return this.updateStatus(normalized, 'cancelled', { cancellation_reason: reason || 'Cancelled from Folio', cancellation_fee: 0 });
   },
   async buildPayload(input, id = '') {
     const nights = nightsBetween(input.check_in_date, input.check_out_date);
@@ -669,7 +683,7 @@ function normalizeFolioItemType(itemType) {
 function validateFolioItemPayload(folioId, payload) {
   if (!folioId) throw new Error('Folio wajib dipilih sebelum menambah transaksi.');
   const itemType = normalizeFolioItemType(payload.item_type);
-  if (!FOLIO_ITEM_TYPES.includes(itemType)) throw new Error(`Tipe item folio tidak valid: ${payload.item_type || '-'}. Jalankan migration schema jika constraint database masih lama.`);
+  if (!FOLIO_ITEM_TYPES.includes(itemType)) throw new Error(`Tipe item folio tidak valid: ${payload.item_type || '-'}. Silakan pilih tipe item lain atau hubungi administrator.`);
   if (!payload.description?.trim()) throw new Error('Deskripsi item wajib diisi.');
   const qty = Number(payload.qty);
   const unitPrice = payload.unit_price === '' || payload.unit_price == null ? NaN : Number(payload.unit_price);
@@ -798,7 +812,7 @@ export const foliosApi = {
       voided_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     }).eq('id', itemId).eq('folio_id', folioId).select('*').single();
-    if (error) throw new Error(parsePgError(error, 'Gagal void item folio. Jika ditolak RLS, jalankan migration RLS folio_items terbaru.'));
+    if (error) throw new Error(parsePgError(error, 'Gagal void item folio. Pastikan role Anda memiliki izin.'));
     const folio = await this.recalculateFolioTotals(folioId);
     await logAuditEvent('void_folio_item', 'folio_items', itemId, { before, after: data, reason });
     return folio;
@@ -818,6 +832,53 @@ export const foliosApi = {
       unit_price: moneyValue(reservation.room_rate)
     });
   },
+  async syncReservationRoomCharge(folioId, reservation) {
+    const normalized = normalizeReservation(reservation);
+    const folio = await this.getFolio(folioId);
+    const nights = Math.max(Number(normalized.nights || nightsBetween(normalized.check_in_date, normalized.check_out_date) || 1), 1);
+    const existing = (folio.folio_items || []).find((item) => item.item_type === 'room' && item.reservation_id === normalized.id && item.is_void !== true);
+    const body = {
+      reservation_id: normalized.id,
+      room_id: normalized.room_id || null,
+      item_type: 'room',
+      description: `Room charge ${normalized.rooms?.room_number || ''} x ${nights} malam`,
+      qty: nights,
+      unit_price: moneyValue(normalized.room_rate),
+      posting_date: normalized.check_in_date || today()
+    };
+    if (!existing) return this.addFolioItem(folioId, body);
+    const { error } = await requireSupabase().from('folio_items').update({ ...body, updated_at: new Date().toISOString() }).eq('id', existing.id).eq('folio_id', folioId);
+    if (error) throw new Error(parsePgError(error, 'Gagal sync room charge reservasi.'));
+    await logAuditEvent('sync_reservation_room_charge', 'folio_items', existing.id, body);
+    return this.recalculateFolioTotals(folioId);
+  },
+  async extendStay(folioId, reservation, payload = {}) {
+    const normalized = normalizeReservation(reservation);
+    const oldCheckout = normalized.check_out_date;
+    const newCheckout = payload.new_check_out_date;
+    if (!newCheckout || newCheckout <= oldCheckout) throw new Error('Tanggal checkout baru harus lebih besar dari checkout lama.');
+    if (normalized.room_id) {
+      const { data, error } = await requireSupabase().from('reservations').select('id,reservation_code,reservation_number,check_in_date,check_out_date,status').eq('room_id', normalized.room_id).in('status', ['reserved', 'checked_in']);
+      raise(error);
+      const conflict = (data || []).find((item) => item.id !== normalized.id && datesOverlap(item.check_in_date, item.check_out_date, oldCheckout, newCheckout));
+      if (conflict) throw new Error(`Extend stay ditolak. Kamar bentrok dengan ${conflict.reservation_code || conflict.reservation_number}.`);
+    }
+    const extraNights = nightsBetween(oldCheckout, newCheckout);
+    const rate = payload.extra_nightly_rate === '' || payload.extra_nightly_rate == null ? moneyValue(normalized.room_rate) : moneyValue(payload.extra_nightly_rate);
+    if (rate <= 0) throw new Error('Tarif tambahan per malam wajib diisi karena rate kamar belum tersedia.');
+    const updated = await reservationsApi.update(normalized.id, { ...normalized, check_out_date: newCheckout, checkout_date: newCheckout });
+    await this.addFolioItem(folioId, {
+      reservation_id: normalized.id,
+      room_id: normalized.room_id || null,
+      item_type: 'room',
+      description: `Extend stay ${normalized.reservation_code || ''}: ${oldCheckout} ke ${newCheckout}`,
+      qty: extraNights,
+      unit_price: rate,
+      posting_date: oldCheckout || today()
+    });
+    await logAuditEvent('extend_stay', 'reservations', normalized.id, { old_checkout: oldCheckout, new_checkout: newCheckout, extra_nights: extraNights, rate });
+    return this.getFolio(folioId);
+  },
   async addFolioPayment(folioId, payload) {
     const { paymentGroup, paymentMethod, amount } = validatePaymentPayload(payload);
     const folio = await this.getFolio(folioId);
@@ -831,7 +892,7 @@ export const foliosApi = {
       reference_number: payload.reference_number || null,
       card_or_account_number: payload.card_or_account_number || null,
       notes: payload.notes || null,
-      paid_at: new Date().toISOString()
+      paid_at: payload.paid_at || new Date().toISOString()
     }).select('*').single();
     if (error) throw new Error(parsePgError(error, 'Gagal menyimpan payment folio.'));
     const updated = await this.recalculateFolioTotals(folioId, payload.payment_type === 'refund' ? 'refunded' : '');
@@ -1166,7 +1227,7 @@ export const profilesApi = {
   async createProfile(payload, role = '') {
     assertSuperAdmin(role);
     if (!payload.email?.trim()) throw new Error('Email wajib diisi.');
-    if (!payload.id?.trim()) throw new Error('Auth User UUID wajib diisi karena frontend anon key tidak boleh membuat Supabase Auth user. Buat/invite Auth user dari Dashboard lebih dulu.');
+    if (!payload.id?.trim()) throw new Error('User ID wajib diisi.');
     const body = {
       id: payload.id.trim(),
       email: payload.email.trim().toLowerCase(),
@@ -1178,7 +1239,7 @@ export const profilesApi = {
     };
     Object.keys(body).forEach((key) => body[key] === undefined && delete body[key]);
     const { data, error } = await requireSupabase().from('profiles').insert(body).select('*').single();
-    if (error) throw new Error(parsePgError(error, 'Gagal membuat profile user. Pastikan Auth user sudah ada dan RLS mengizinkan super_admin.'));
+    if (error) throw new Error(parsePgError(error, 'Gagal membuat user. Pastikan data user lengkap dan role Anda memiliki izin.'));
     await logAuditEvent('create_profile_user', 'profiles', data.id, body);
     return data;
   },

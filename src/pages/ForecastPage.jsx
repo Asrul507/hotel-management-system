@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { forecastApi } from '../services/api';
+import { ReportSubnav } from '../components/ModuleSubnav';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const addDays = (days) => {
@@ -46,6 +47,7 @@ export default function ForecastPage() {
 
   return <div className="page-stack">
     <div className="page-header"><div><h1>Forecast Hunian</h1><p>Forecast inventory, occupancy, arrival, dan departure berdasarkan filter tanggal.</p></div></div>
+    <ReportSubnav activeLabel="Forecast" />
     {error && <div className="alert error">{error}</div>}
     <form className="card inline-form forecast-filter" onSubmit={(e) => { e.preventDefault(); load(); }}>
       <label>Mulai<input type="date" value={filters.startDate} onChange={(e) => setFilters({ ...filters, startDate: e.target.value })} /></label>

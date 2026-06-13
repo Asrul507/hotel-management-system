@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import AppLayout from './layouts/AppLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 import LoginPage from './pages/LoginPage';
+import HomePage from './pages/HomePage';
 import DashboardPage from './pages/DashboardPage';
 import MasterSettingsPage from './pages/MasterSettingsPage';
 import GuestsPage from './pages/GuestsPage';
@@ -23,9 +24,7 @@ const allowed = (feature, element) => <ProtectedRoute allow={roleAccess[feature]
 function HomeRoute() {
   const { profile } = useAuth();
 
-  if (canAccess(profile?.role, 'dashboard')) return <DashboardPage />;
-  if (canAccess(profile?.role, 'billing')) return <Navigate to="/billing" replace />;
-  if (canAccess(profile?.role, 'housekeeping')) return <Navigate to="/housekeeping" replace />;
+  if (canAccess(profile?.role, 'home')) return <HomePage />;
 
   return <Navigate to="/unauthorized" replace />;
 }
@@ -36,6 +35,7 @@ export default function App() {
     <Route path="/unauthorized" element={<UnauthorizedPage />} />
     <Route element={<ProtectedRoute allow={anyStaff}><AppLayout /></ProtectedRoute>}>
       <Route path="/" element={<HomeRoute />} />
+      <Route path="/dashboard" element={allowed('dashboard', <DashboardPage />)} />
       <Route path="/rooms" element={<Navigate to="/master-settings" replace />} />
       <Route path="/master-settings" element={allowed('masterSettings', <MasterSettingsPage />)} />
       <Route path="/settings/rooms" element={<Navigate to="/master-settings" replace />} />

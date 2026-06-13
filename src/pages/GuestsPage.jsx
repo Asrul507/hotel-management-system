@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { guestsApi } from '../services/api';
 import IconButton from '../components/IconButton';
+import { FrontOfficeSubnav } from '../components/ModuleSubnav';
+import { useAppDialog } from '../components/AppDialog';
 import { faFilter, faPenToSquare, faTrash } from '@fortawesome/free-solid-svg-icons';
 
 const emptyForm = { full_name: '', nik: '', phone: '', email: '', address: '', city: '', birth_date: '', gender: '', notes: '', is_blacklisted: false, is_active: true };
 
 export default function GuestsPage() {
+  const dialog = useAppDialog();
   const [guests, setGuests] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState('');
@@ -64,7 +67,8 @@ export default function GuestsPage() {
   }
 
   async function archive(guest) {
-    if (!window.confirm(`Arsipkan tamu ${guest.full_name}?`)) return;
+    const confirmed = await dialog.confirm({ title: 'Arsipkan Tamu', message: `Arsipkan tamu ${guest.full_name}?`, confirmLabel: 'Arsipkan', danger: true });
+    if (!confirmed) return;
     setSaving(guest.id);
     setError('');
     try {
@@ -79,6 +83,7 @@ export default function GuestsPage() {
 
   return <div className="page-stack">
     <div className="page-header"><div><h1>Tamu</h1><p>Database tamu lengkap dengan pencarian nama, NIK, dan nomor HP.</p></div></div>
+    <FrontOfficeSubnav activeLabel="Guest Database" />
     {error && <div className="alert error">{error}</div>}
     <div className="two-column">
       <form className="card form-grid" onSubmit={submit}>
