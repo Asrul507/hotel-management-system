@@ -182,3 +182,33 @@ tbody tr button, tbody tr a, tbody tr input, tbody tr select, tbody tr textarea 
 .folio-summary-main strong { display: block; margin-top: .25rem; color: #fff; font-size: clamp(1.15rem, 2vw, 1.7rem); overflow-wrap: anywhere; }
 .folio-summary-actions { display: flex; align-items: center; justify-content: flex-end; gap: .5rem; flex-wrap: wrap; }
 @media (max-width: 768px){ .modal-card{border-radius:18px}.overview-field-grid,.folio-summary-main{grid-template-columns:1fr}.folio-summary-card{flex-direction:column}.folio-summary-actions{justify-content:flex-start}.modal-backdrop{align-items:end} }
+
+/* Button alignment cleanup + explicit row overview action */
+button, .button-link, .icon-button, .action-pill, .row-overview-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .45rem;
+  min-height: 2.35rem;
+  border-radius: 999px;
+  font-weight: 800;
+  line-height: 1.1;
+  text-align: center;
+  vertical-align: middle;
+  text-decoration: none;
+  white-space: nowrap;
+}
+button, .button-link, .icon-button { box-shadow: 0 8px 20px rgba(2, 6, 23, .16); }
+button.secondary, .button-link.secondary, .button-link.secondary-link, .icon-button.secondary { background: #334155; border-color: #475569; color: #e2e8f0; }
+.button-row, .action-toolbar, .action-group, .table-actions, .folio-summary-actions { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.button-row > *, .action-toolbar > *, .action-group > *, .table-actions > * { flex: 0 0 auto; }
+.table-actions { min-width: max-content; }
+.table-actions .muted { max-width: 150px; line-height: 1.25; }
+.stable-subnav { position: sticky; top: 4.6rem; z-index: 9; background: rgba(15, 23, 42, .92); backdrop-filter: blur(14px); }
+.stable-subnav .action-pill { color: #dbeafe; border: 1px solid #475569; background: #334155; }
+.stable-subnav .action-pill.active { background: #2563eb; border-color: #60a5fa; color: #fff; }
+tbody tr { cursor: default; }
+.has-row-overview-action > td:first-child, .has-row-overview-action > th:first-child { white-space: nowrap; }
+.row-overview-trigger { width: 2rem; min-width: 2rem; height: 2rem; min-height: 2rem; padding: 0; margin: 0 .45rem 0 0; border: 1px solid #475569; background: #1e293b; color: #dbeafe; box-shadow: none; font-size: 1.15rem; }
+.row-overview-trigger:hover { background: #2563eb; border-color: #60a5fa; color: #fff; transform: translateY(-1px); }
+@media (max-width: 768px){ button, .button-link, .icon-button, .action-pill{white-space:normal}.stable-subnav{position:static}.table-actions{min-width:0}.button-row > button, .button-row > .button-link{width:auto} }

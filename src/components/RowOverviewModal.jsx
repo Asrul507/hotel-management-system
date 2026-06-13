@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 
-const interactiveSelector = 'button,a,input,select,textarea,label,summary,[role="button"],[data-row-action="true"]';
-const textOf = (node) => String(node?.innerText || node?.textContent || '').replace(/\s+/g, ' ').trim();
+const triggerClass = 'row-overview-trigger';
+const textOf = (node) => {
+  const clone = node?.cloneNode?.(true);
+  clone?.querySelectorAll?.(`.${triggerClass}, button, a, input, select, textarea, label, summary, [role="button"], [data-row-action="true"]`).forEach((item) => item.remove());
+  return String(clone?.innerText || clone?.textContent || '').replace(/\s+/g, ' ').trim();
+};
 
 function collectRowOverview(row) {
   const table = row.closest('table');
@@ -16,21 +20,52 @@ function collectRowOverview(row) {
   return { title, tableTitle, fields };
 }
 
+function ensureOverviewButtons(root = document) {
+  root.querySelectorAll?.('tbody tr').forEach((row) => {
+    if (row.dataset.disableOverview === 'true' || row.querySelector(`.${triggerClass}`)) return;
+    const firstCell = row.querySelector('td,th');
+    if (!firstCell) return;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = triggerClass;
+    button.title = 'Lihat detail / overview';
+    button.setAttribute('aria-label', 'Lihat detail / overview baris');
+    button.setAttribute('data-row-action', 'true');
+    button.textContent = '⋮';
+    firstCell.prepend(button);
+    row.classList.add('has-row-overview-action');
+  });
+}
+
 export default function RowOverviewModal() {
   const [overview, setOverview] = useState(null);
 
   useEffect(() => {
+    ensureOverviewButtons();
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => mutation.addedNodes.forEach((node) => {
+        if (node.nodeType === Node.ELEMENT_NODE) ensureOverviewButtons(node);
+      }));
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
     function handleClick(event) {
-      if (event.defaultPrevented || event.target.closest(interactiveSelector)) return;
-      const row = event.target.closest('tbody tr');
-      if (!row || row.dataset.disableOverview === 'true') return;
+      const trigger = event.target.closest(`.${triggerClass}`);
+      if (!trigger) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const row = trigger.closest('tr');
+      if (!row) return;
       const fields = collectRowOverview(row);
       if (fields.fields.length === 0) return;
       setOverview(fields);
     }
 
-    document.addEventListener('click', handleClick);
-    return () => document.removeEventListener('click', handleClick);
+    document.addEventListener('click', handleClick, true);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener('click', handleClick, true);
+    };
   }, []);
 
   useEffect(() => {

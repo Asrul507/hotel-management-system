@@ -3,6 +3,7 @@ import { ADDITIONAL_CHARGE_TYPES, NON_CASH_METHODS, addDaysToDate, foliosApi, gu
 import { useAuth } from '../contexts/AuthContext';
 import { getBillingStatus, getBillingStatusLabel } from '../utils/billingStatus';
 import IconButton from '../components/IconButton';
+import { FrontOfficeSubnav } from '../components/ModuleSubnav';
 import { faCalendarPlus, faCreditCard, faFilter, faFloppyDisk, faLock, faMoneyBillWave, faPenToSquare, faPlus, faRotateLeft, faTrash } from '@fortawesome/free-solid-svg-icons';
 
 const money = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 });
@@ -284,6 +285,7 @@ export default function BillingPage() {
 
   return <div className="page-stack">
     <div className="page-header"><div><h1>Folio / Billing Workspace</h1><p>Billing utama memakai folio baru. Invoice lama hanya legacy saat check-out.</p></div></div>
+    <FrontOfficeSubnav activeLabel="Folio" />
     {error && <div className="alert error">{error}</div>}
     {success && <div className="alert success">{success}</div>}
     <div className="billing-layout">
