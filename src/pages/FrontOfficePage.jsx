@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { foliosApi, nightsBetween, reservationsApi, roomsApi, staysApi, today } from '../services/api';
 import { getBillingStatus, getBillingStatusLabel } from '../utils/billingStatus';
 import IconButton from '../components/IconButton';
+import { useAppDialog } from '../components/AppDialog';
 import { faClipboardList, faFilter, faRightFromBracket, faRightToBracket } from '@fortawesome/free-solid-svg-icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 
@@ -17,6 +18,7 @@ const views = [
 ];
 
 export default function FrontOfficePage() {
+  const dialog = useAppDialog();
   const [activeView, setActiveView] = useState('expected_arrival');
   const [rows, setRows] = useState([]);
   const [folios, setFolios] = useState([]);
@@ -92,10 +94,10 @@ export default function FrontOfficePage() {
     run(`checkin-${reservation.id}`, () => staysApi.checkIn(reservation, selectedRoomId), 'Check-in berhasil. Tamu masuk ke In House.').then((ok) => { if (ok) setActiveView('in_house'); });
   };
 
-  const handleCheckOut = (stay) => {
+  const handleCheckOut = async (stay) => {
     const expected = stay.reservations?.check_out_date || stay.reservations?.checkout_date;
     const early = expected && today() < expected;
-    const proceed = !early || window.confirm('Tamu check-out lebih awal dari tanggal rencana. Jika dilanjutkan, tanggal check-out reservasi akan diubah menjadi hari ini. Lanjutkan?');
+    const proceed = !early || await dialog.confirm({ title: 'Check-out Lebih Awal', message: 'Tamu check-out lebih awal dari tanggal rencana. Jika dilanjutkan, tanggal check-out reservasi akan diubah menjadi hari ini.', confirmLabel: 'Lanjutkan' });
     if (!proceed) return;
     run(`checkout-${stay.id}`, () => staysApi.checkOut(stay, { earlyCheckoutApproved: early }), 'Check-out berhasil. Kamar menjadi VD.');
   };

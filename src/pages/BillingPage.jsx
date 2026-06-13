@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { getBillingStatus, getBillingStatusLabel } from '../utils/billingStatus';
 import IconButton from '../components/IconButton';
 import { FrontOfficeSubnav } from '../components/ModuleSubnav';
+import { useAppDialog } from '../components/AppDialog';
 import { faCalendarPlus, faCreditCard, faFilter, faFloppyDisk, faLock, faMoneyBillWave, faPenToSquare, faPlus, faRotateLeft, faTrash } from '@fortawesome/free-solid-svg-icons';
 
 const money = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 });
@@ -13,6 +14,7 @@ const emptyReservation = { guest_id: '', room_type_id: '', room_id: '', check_in
 
 export default function BillingPage() {
   const { profile } = useAuth();
+  const dialog = useAppDialog();
   const [folios, setFolios] = useState([]);
   const [guests, setGuests] = useState([]);
   const [roomTypes, setRoomTypes] = useState([]);
@@ -204,15 +206,18 @@ export default function BillingPage() {
     setEditItem((current) => ({ ...current, [field]: value }));
   }
 
-  function confirmClosedFolioAction(action) {
+  async function confirmClosedFolioAction(action) {
     if (!['closed', 'debt', 'refunded'].includes(selected?.status)) return true;
-    return window.confirm(`Folio sudah ${selected.status}. Lanjut ${action} transaksi?`);
+    return dialog.confirm({ title: 'Folio Sudah Ditutup', message: `Folio sudah ${selected.status}. Lanjut ${action} transaksi?`, confirmLabel: 'Lanjutkan' });
   }
 
-  function voidItem(item) {
-    if (!window.confirm('Yakin hapus/void transaksi ini? Total folio akan dihitung ulang.')) return;
-    if (!confirmClosedFolioAction('void')) return;
-    const reason = window.prompt('Alasan void transaksi?', 'Void by super admin') || 'Void by super admin';
+  async function voidItem(item) {
+    const confirmed = await dialog.confirm({ title: 'Void Transaksi', message: 'Yakin hapus/void transaksi ini? Total folio akan dihitung ulang.', confirmLabel: 'Void', danger: true });
+    if (!confirmed) return;
+    if (!await confirmClosedFolioAction('void')) return;
+    const result = await dialog.form({ title: 'Alasan Void', message: 'Masukkan alasan void transaksi.', confirmLabel: 'Void Transaksi', danger: true, fields: [{ name: 'reason', label: 'Alasan', defaultValue: 'Void by admin', full: true, autoFocus: true }] });
+    if (!result.confirmed) return;
+    const reason = result.values.reason || 'Void by admin';
     run(`void-${item.id}`, () => foliosApi.voidFolioItem(selected.id, item.id, profile?.role, reason), 'Transaksi berhasil di-void.');
   }
 
@@ -267,9 +272,10 @@ export default function BillingPage() {
     setExtendStay((current) => current ? { ...current, [field]: value } : current);
   }
 
-  function cancelReservationFromFolio(reservation) {
-    const reason = window.prompt(`Alasan cancel reservasi ${reservation.reservation_code || ''}?`, 'Cancelled from Folio') || 'Cancelled from Folio';
-    if (!window.confirm('Reservasi akan diubah ke status cancelled agar folio/transaksi tidak orphan. Lanjutkan?')) return;
+  async function cancelReservationFromFolio(reservation) {
+    const result = await dialog.form({ title: 'Cancel Reservasi', message: `Reservasi ${reservation.reservation_code || '-'} akan diubah ke status cancelled agar transaksi tetap aman.`, confirmLabel: 'Cancel Reservasi', danger: true, fields: [{ name: 'reason', label: 'Alasan cancel', defaultValue: 'Cancelled from Folio', full: true, autoFocus: true }] });
+    if (!result.confirmed) return;
+    const reason = result.values.reason || 'Cancelled from Folio';
     run(`cancel-reservation-${reservation.id}`, () => reservationsApi.cancelFromFolio(reservation, profile?.role, reason), 'Reservasi berhasil dicancel dari Folio.');
   }
 
@@ -284,7 +290,7 @@ export default function BillingPage() {
   ], []);
 
   return <div className="page-stack">
-    <div className="page-header"><div><h1>Folio / Billing Workspace</h1><p>Billing utama memakai folio baru. Invoice lama hanya legacy saat check-out.</p></div></div>
+    <div className="page-header"><div><h1>Folio / Billing Workspace</h1><p>Kelola folio tamu, reservasi, charge, pembayaran, refund, dan debt dalam satu halaman.</p></div></div>
     <FrontOfficeSubnav activeLabel="Folio" />
     {error && <div className="alert error">{error}</div>}
     {success && <div className="alert success">{success}</div>}
@@ -345,7 +351,7 @@ export default function BillingPage() {
           <label>Posting date<input type="date" value={charge.posting_date} onChange={(e) => updateCharge('posting_date', e.target.value)} /></label>
           <p><strong>Total otomatis</strong><br />{money.format(chargeTotal || 0)}</p>
           <button disabled={saving === 'charge'}>Add Charge</button>
-        </form>{editItem && <form className="card form-grid" onSubmit={(e) => { e.preventDefault(); if (!confirmClosedFolioAction('edit')) return; run(`edit-${editItem.id}`, async () => { await foliosApi.updateFolioItem(selected.id, editItem.id, editItem, profile?.role); setEditItem(null); }, 'Transaksi berhasil diupdate.'); }}>
+        </form>{editItem && <form className="card form-grid" onSubmit={async (e) => { e.preventDefault(); if (!await confirmClosedFolioAction('edit')) return; run(`edit-${editItem.id}`, async () => { await foliosApi.updateFolioItem(selected.id, editItem.id, editItem, profile?.role); setEditItem(null); }, 'Transaksi berhasil diupdate.'); }}>
           <h2>Edit Folio Item</h2>
           <label>Item<select value={editItem.item_type} onChange={(e) => updateEditItem('item_type', e.target.value)}>{ADDITIONAL_CHARGE_TYPES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}<option value="room">Room Charge</option><option value="cancellation_fee">Cancellation Fee</option><option value="no_show_fee">No-show Fee</option><option value="adjustment">Adjustment</option></select></label>
           <label>Description<input required value={editItem.description} onChange={(e) => updateEditItem('description', e.target.value)} /></label>

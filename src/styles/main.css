@@ -212,3 +212,12 @@ tbody tr { cursor: default; }
 .row-overview-trigger { width: 2rem; min-width: 2rem; height: 2rem; min-height: 2rem; padding: 0; margin: 0 .45rem 0 0; border: 1px solid #475569; background: #1e293b; color: #dbeafe; box-shadow: none; font-size: 1.15rem; }
 .row-overview-trigger:hover { background: #2563eb; border-color: #60a5fa; color: #fff; transform: translateY(-1px); }
 @media (max-width: 768px){ button, .button-link, .icon-button, .action-pill{white-space:normal}.stable-subnav{position:static}.table-actions{min-width:0}.button-row > button, .button-row > .button-link{width:auto} }
+
+/* Centered application dialogs replacing browser alerts */
+.app-dialog-card { width: min(520px, 100%); }
+.dialog-message { color: #cbd5e1; line-height: 1.55; margin: 0 0 1rem; }
+.dialog-fields { margin-bottom: 1rem; }
+.dialog-actions { justify-content: flex-end; margin-bottom: 0; }
+button.danger { background: #b91c1c; border-color: #ef4444; color: #fff; }
+button.danger:hover:not(:disabled) { background: #dc2626; }
+@media (max-width: 480px){ .dialog-actions{justify-content:stretch}.dialog-actions button{flex:1} }

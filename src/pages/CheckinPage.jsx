@@ -3,6 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { calculateStayBilling, foliosApi, reservationsApi, roomsApi, staysApi } from '../services/api';
 import { getBillingStatus, getBillingStatusLabel } from '../utils/billingStatus';
 import IconButton from '../components/IconButton';
+import { useAppDialog } from '../components/AppDialog';
 import { faRightFromBracket, faRightLeft, faRightToBracket } from '@fortawesome/free-solid-svg-icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 
@@ -10,6 +11,7 @@ const money = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR
 
 export default function CheckinPage() {
   const { profile } = useAuth();
+  const dialog = useAppDialog();
   const [arrivals, setArrivals] = useState([]);
   const [activeStays, setActiveStays] = useState([]);
   const [roomChoices, setRoomChoices] = useState({});
@@ -48,7 +50,10 @@ export default function CheckinPage() {
   useEffect(() => { load(); }, []);
 
   const run = async (id, action, confirmText = '') => {
-    if (confirmText && !window.confirm(confirmText)) return;
+    if (confirmText) {
+      const confirmed = await dialog.confirm({ title: 'Konfirmasi Operasional', message: confirmText, confirmLabel: 'Lanjutkan' });
+      if (!confirmed) return;
+    }
     setProcessing(id);
     setError('');
     try {

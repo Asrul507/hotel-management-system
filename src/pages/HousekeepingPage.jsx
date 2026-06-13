@@ -4,12 +4,14 @@ import { useAuth } from '../contexts/AuthContext';
 import { housekeepingApi, roomTypesApi } from '../services/api';
 import { HK_STATUSES, allowedNextHkStatuses } from '../utils/roomStatus';
 import IconButton from '../components/IconButton';
+import { useAppDialog } from '../components/AppDialog';
 import { faBroom } from '@fortawesome/free-solid-svg-icons';
 
 const normalFlow = { VD: 'VC', OD: 'OC', VC: 'VR' };
 
 export default function HousekeepingPage() {
   const { profile } = useAuth();
+  const dialog = useAppDialog();
   const [rooms, setRooms] = useState([]);
   const [roomTypes, setRoomTypes] = useState([]);
   const [selected, setSelected] = useState([]);
@@ -78,7 +80,8 @@ export default function HousekeepingPage() {
     if (selectedRooms.length === 0) return setError('Pilih minimal satu kamar.');
     if (!bulkStatuses.includes(bulk.target_hk_status)) return setError('Target HK status tidak valid untuk kombinasi kamar/role yang dipilih.');
     const fromText = filters.hkStatus === 'all' ? 'status terpilih' : filters.hkStatus;
-    if (!window.confirm(`Update ${selectedRooms.length} kamar dari ${fromText} ke ${bulk.target_hk_status}?`)) return;
+    const confirmed = await dialog.confirm({ title: 'Bulk Update Housekeeping', message: `Update ${selectedRooms.length} kamar dari ${fromText} ke ${bulk.target_hk_status}?`, confirmLabel: 'Update' });
+    if (!confirmed) return;
     setSaving('bulk');
     setError('');
     setSuccess('');

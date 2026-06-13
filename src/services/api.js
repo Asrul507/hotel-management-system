@@ -49,10 +49,10 @@ function parsePgError(error, fallback) {
   const lowerDetail = detail.toLowerCase();
   if (isRateLimitError(error)) return getFriendlySupabaseError(error);
   if (error.code === '23505') return 'Data sudah ada. Periksa nomor kamar, kode, NIK, folio, atau nomor reservasi yang harus unique.';
-  if (error.code === '23514') return `${fallback} Constraint database gagal. Periksa item_type, status, tanggal, qty, dan unit price. Detail: ${detail || 'check constraint violation.'}`;
+  if (error.code === '23514') return `${fallback} Data belum sesuai. Periksa status, tanggal, qty, dan nominal.`;
   if (error.code === '23502') return `${fallback} Field wajib belum lengkap. Detail: ${detail || 'not-null violation.'}`;
-  if (error.code === '42501') return `${fallback} Akses database ditolak oleh RLS/policy. Jalankan migration RLS terbaru atau cek role user.`;
-  if (lowerDetail.includes('generated') || lowerDetail.includes('line_total')) return `${fallback} Jangan kirim kolom generated seperti line_total dari frontend.`;
+  if (error.code === '42501') return `${fallback} Akses ditolak. Pastikan role user memiliki izin untuk aksi ini.`;
+  if (lowerDetail.includes('generated') || lowerDetail.includes('line_total')) return `${fallback} Data transaksi tidak valid. Silakan muat ulang halaman lalu coba lagi.`;
   return detail || fallback;
 }
 
@@ -683,7 +683,7 @@ function normalizeFolioItemType(itemType) {
 function validateFolioItemPayload(folioId, payload) {
   if (!folioId) throw new Error('Folio wajib dipilih sebelum menambah transaksi.');
   const itemType = normalizeFolioItemType(payload.item_type);
-  if (!FOLIO_ITEM_TYPES.includes(itemType)) throw new Error(`Tipe item folio tidak valid: ${payload.item_type || '-'}. Jalankan migration schema jika constraint database masih lama.`);
+  if (!FOLIO_ITEM_TYPES.includes(itemType)) throw new Error(`Tipe item folio tidak valid: ${payload.item_type || '-'}. Silakan pilih tipe item lain atau hubungi administrator.`);
   if (!payload.description?.trim()) throw new Error('Deskripsi item wajib diisi.');
   const qty = Number(payload.qty);
   const unitPrice = payload.unit_price === '' || payload.unit_price == null ? NaN : Number(payload.unit_price);
@@ -812,7 +812,7 @@ export const foliosApi = {
       voided_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     }).eq('id', itemId).eq('folio_id', folioId).select('*').single();
-    if (error) throw new Error(parsePgError(error, 'Gagal void item folio. Jika ditolak RLS, jalankan migration RLS folio_items terbaru.'));
+    if (error) throw new Error(parsePgError(error, 'Gagal void item folio. Pastikan role Anda memiliki izin.'));
     const folio = await this.recalculateFolioTotals(folioId);
     await logAuditEvent('void_folio_item', 'folio_items', itemId, { before, after: data, reason });
     return folio;
@@ -1227,7 +1227,7 @@ export const profilesApi = {
   async createProfile(payload, role = '') {
     assertSuperAdmin(role);
     if (!payload.email?.trim()) throw new Error('Email wajib diisi.');
-    if (!payload.id?.trim()) throw new Error('Auth User UUID wajib diisi karena frontend anon key tidak boleh membuat Supabase Auth user. Buat/invite Auth user dari Dashboard lebih dulu.');
+    if (!payload.id?.trim()) throw new Error('User ID wajib diisi.');
     const body = {
       id: payload.id.trim(),
       email: payload.email.trim().toLowerCase(),
@@ -1239,7 +1239,7 @@ export const profilesApi = {
     };
     Object.keys(body).forEach((key) => body[key] === undefined && delete body[key]);
     const { data, error } = await requireSupabase().from('profiles').insert(body).select('*').single();
-    if (error) throw new Error(parsePgError(error, 'Gagal membuat profile user. Pastikan Auth user sudah ada dan RLS mengizinkan super_admin.'));
+    if (error) throw new Error(parsePgError(error, 'Gagal membuat user. Pastikan data user lengkap dan role Anda memiliki izin.'));
     await logAuditEvent('create_profile_user', 'profiles', data.id, body);
     return data;
   },

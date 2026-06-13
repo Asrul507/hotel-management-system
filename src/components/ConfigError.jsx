@@ -3,18 +3,18 @@ export default function ConfigError({ message }) {
     <div className="config-error-page">
       <section className="card config-error-card">
         <p className="badge">Konfigurasi diperlukan</p>
-        <h1>Supabase belum dikonfigurasi</h1>
+        <h1>Aplikasi belum siap digunakan</h1>
         <p className="alert error">
-          {message || 'Set VITE_SUPABASE_URL dan VITE_SUPABASE_ANON_KEY sebelum menjalankan aplikasi.'}
+          {message || 'Konfigurasi koneksi aplikasi belum lengkap. Hubungi administrator sistem.'}
         </p>
 
-        <h2>ENV wajib</h2>
+        <h2>Konfigurasi yang dibutuhkan</h2>
         <ul>
           <li><code>VITE_SUPABASE_URL</code></li>
           <li><code>VITE_SUPABASE_ANON_KEY</code></li>
         </ul>
 
-        <h2>Cara perbaikan di Netlify</h2>
+        <h2>Langkah perbaikan untuk administrator</h2>
         <ol>
           <li>Buka Netlify Dashboard lalu pilih site aplikasi.</li>
           <li>Masuk ke <strong>Site settings / Site configuration</strong> &gt; <strong>Environment variables</strong> &gt; <strong>Add variable</strong>.</li>
@@ -23,7 +23,7 @@ export default function ConfigError({ message }) {
         </ol>
 
         <p className="muted">
-          Project ini memakai Vite. Environment variable frontend dibaca saat build, jadi setelah menambah atau mengubah ENV di Netlify wajib redeploy ulang.
+          Setelah konfigurasi diperbarui, lakukan deploy ulang aplikasi agar perubahan aktif.
         </p>
       </section>
     </div>

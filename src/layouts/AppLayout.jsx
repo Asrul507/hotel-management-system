@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { canAccess } from '../utils/roles';
 import { APP_BUILD_LABEL, APP_VERSION } from '../config/appVersion';
 import RowOverviewModal from '../components/RowOverviewModal';
+import { AppDialogProvider } from '../components/AppDialog';
 
 const settingsMenus = [
   ['/master-settings', 'Room Configuration', 'masterSettings'],
@@ -41,8 +42,10 @@ export default function AppLayout() {
           <button className="logout-button" onClick={signOut}><FontAwesomeIcon icon={faDoorOpen} aria-hidden="true" />Logout</button>
         </div>
       </header>
-      <main className="content pms-content"><Outlet /></main>
-      <RowOverviewModal />
+      <AppDialogProvider>
+        <main className="content pms-content"><Outlet /></main>
+        <RowOverviewModal />
+      </AppDialogProvider>
     </div>
   );
 }
