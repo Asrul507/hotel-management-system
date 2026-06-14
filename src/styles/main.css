@@ -383,3 +383,41 @@ tbody tr:hover { background: var(--surface-soft); }
   .folio-summary-main, .pos-summary-card.compact { grid-template-columns: 1fr; }
   .modal-card { border-radius: var(--radius); }
 }
+
+/* Front Office simplified workflow */
+.front-office-page { --primary:#1e3a8a; --primary-hover:#1d4ed8; --primary-soft:#eff6ff; --bg:#f7f8fa; --surface:#fff; --surface-soft:#f9fafb; --border:#dde3ea; --text:#1f2937; --muted:#6b7280; --radius:10px; background:var(--bg); color:var(--text); }
+.fo-page-title { align-items:flex-start; }
+.fo-tabs { display:flex; gap:.5rem; flex-wrap:wrap; padding:.45rem; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); }
+.fo-tabs button { border:1px solid transparent; border-radius:8px; background:transparent; color:var(--muted); padding:.65rem .95rem; font-weight:800; }
+.fo-tabs button.active, .fo-tabs button:hover { border-color:#bfdbfe; background:var(--primary-soft); color:var(--primary); }
+.fo-tabs.compact { margin:1rem 0; }
+.fo-panel { border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); padding:1rem; box-shadow:none; }
+.fo-input-grid { display:grid; grid-template-columns:minmax(220px,.8fr) minmax(280px,1.2fr) minmax(280px,1fr); gap:1rem; align-items:start; }
+.fo-section { border:1px solid var(--border); border-radius:var(--radius); background:var(--surface-soft); padding:1rem; }
+.fo-section h2, .fo-panel h2 { margin-top:0; font-size:1rem; color:var(--primary); }
+.fo-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.75rem; }
+.fo-form-grid .full, .fo-section .full { grid-column:1/-1; }
+.fo-section label, .fo-filter-bar label, .fo-payment-box label { display:flex; flex-direction:column; gap:.3rem; color:var(--muted); font-size:.82rem; font-weight:800; }
+.fo-section input, .fo-section select, .fo-section textarea, .fo-filter-bar input, .fo-filter-bar select, .fo-payment-box input, .fo-payment-box select, .fo-payment-box textarea { border:1px solid var(--border); border-radius:8px; background:#fff; color:var(--text); padding:.58rem .65rem; min-height:2.35rem; }
+.front-office-page button, .front-office-page .button-link { background:var(--primary); color:#fff; border:1px solid var(--primary); border-radius:8px; padding:.6rem .85rem; font-weight:800; }
+.front-office-page button:hover, .front-office-page .button-link:hover { background:var(--primary-hover); }
+.front-office-page button.secondary, .front-office-page .secondary-link { background:#fff; color:var(--primary); border-color:var(--border); }
+.front-office-page button:disabled { opacity:.55; cursor:not-allowed; }
+.fo-filter-bar { display:grid; grid-template-columns:repeat(6,minmax(130px,1fr)); gap:.75rem; align-items:end; margin-bottom:1rem; }
+.fo-table-wrap { overflow:auto; border:1px solid var(--border); border-radius:var(--radius); background:#fff; margin-top:.75rem; }
+.fo-table { width:100%; border-collapse:collapse; font-size:.9rem; }
+.fo-table th, .fo-table td { border-bottom:1px solid var(--border); padding:.62rem .7rem; text-align:left; vertical-align:top; }
+.fo-table th { background:var(--surface-soft); color:var(--muted); font-size:.75rem; text-transform:uppercase; letter-spacing:.04em; }
+.fo-table tr:last-child td { border-bottom:0; }
+.fo-summary { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:.6rem; margin:1rem 0; }
+.fo-summary div { border:1px solid var(--border); border-radius:8px; background:var(--surface-soft); padding:.7rem; }
+.fo-summary span { display:block; color:var(--muted); font-size:.72rem; font-weight:900; text-transform:uppercase; }
+.fo-summary strong { display:block; margin-top:.2rem; overflow-wrap:anywhere; }
+.fo-payment-layout { margin-top:1rem; }
+.fo-payment-box { max-width:420px; border:1px solid var(--border); border-radius:var(--radius); background:var(--primary-soft); padding:1rem; margin-top:1rem; display:grid; gap:.75rem; }
+.front-office-page .badge { border-radius:999px; padding:.2rem .55rem; font-weight:800; }
+.front-office-page .badge.open, .front-office-page .badge.unpaid, .front-office-page .badge.reserved { background:#fffbeb; color:#b45309; }
+.front-office-page .badge.close, .front-office-page .badge.closed, .front-office-page .badge.paid, .front-office-page .badge.checked_in { background:#ecfdf5; color:#15803d; }
+.front-office-page .badge.debt, .front-office-page .badge.void, .front-office-page .badge.cancelled { background:#fef2f2; color:#b91c1c; }
+@media (max-width:1100px){ .fo-input-grid{grid-template-columns:1fr}.fo-filter-bar{grid-template-columns:repeat(2,minmax(0,1fr))}.fo-summary{grid-template-columns:repeat(2,minmax(0,1fr))} }
+@media (max-width:640px){ .fo-form-grid,.fo-filter-bar,.fo-summary{grid-template-columns:1fr}.fo-tabs{position:sticky;top:.5rem;z-index:2}.fo-panel{padding:.75rem}.fo-table{font-size:.82rem} }
