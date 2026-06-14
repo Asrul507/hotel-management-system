@@ -48,6 +48,7 @@ export default function BillingPage() {
   const selectedRoomType = roomTypes.find((type) => type.id === reservationForm.room_type_id);
   const chargeTotal = Number(charge.qty || 0) * Number(charge.unit_price || 0);
   const reservations = selected?.reservations || [];
+  const selectedRoomText = reservations.map((reservation) => reservation.rooms?.room_number).filter(Boolean).join(', ') || '-';
   const charges = (selected?.folio_items || []).filter((item) => item.item_type !== 'room');
   const roomCharges = (selected?.folio_items || []).filter((item) => item.item_type === 'room');
   const payments = (selected?.folio_payments || []).filter((item) => item.payment_type === 'payment');
@@ -320,7 +321,7 @@ export default function BillingPage() {
       </div>
 
       {selected ? <div className="page-stack">
-        <FolioHeader folio={selected} guestName={selected.guests?.full_name || selectedGuest?.full_name || '-'} billingStatus={billingStatus} onClose={() => run('close', () => foliosApi.closeFolio(selected.id), selected.balance_due > 0 ? 'Folio ditutup sebagai debt.' : 'Folio ditutup.')} onPayDebt={() => navigate(`/pos?folio_id=${selected.id}`)} saving={saving === 'close'} />
+        <FolioHeader folio={selected} guestName={selected.guests?.full_name || selectedGuest?.full_name || '-'} roomText={selectedRoomText} billingStatus={billingStatus} onClose={() => run('close', () => foliosApi.closeFolio(selected.id), selected.balance_due > 0 ? 'Folio ditutup sebagai debt.' : 'Folio ditutup.')} onPayDebt={() => navigate(`/pos?folio_id=${selected.id}`)} onAddCharge={() => setActiveTab('charges')} saving={saving === 'close'} />
         <div className="card action-toolbar module-tabs">{actionButtons.map(([tab, label]) => <button key={`${tab}-${label}`} className={activeTab === tab ? 'action-pill active' : 'action-pill'} onClick={() => setActiveTab(tab)}>{label}</button>)}</div>
 
         {activeTab === 'overview' && <div className="page-stack"><div className="card detail-list"><h2>Overview Folio</h2><div className="grid"><p><strong>No Bill / Folio</strong><br />{selected.folio_number}</p><p><strong>Guest</strong><br />{selected.guests?.full_name || '-'}</p><p><strong>Status Folio</strong><br /><span className={`badge ${selected.status}`}>{selected.status}</span></p><p><strong>Created</strong><br />{String(selected.created_at || '-').slice(0, 16).replace('T', ' ')}</p><p><strong>Billing Status</strong><br /><span className={`badge ${billingStatus}`}>{getBillingStatusLabel(selected)}</span></p>{selected.notes && <p><strong>Notes</strong><br />{selected.notes}</p>}</div></div>{!hasTransactions ? <div className="card muted">Belum ada transaksi pada folio ini.</div> : <><div className="card detail-list"><h2>Ringkasan Transaksi</h2><div className="grid"><p><strong>Room charge total</strong><br />{money.format(roomChargeTotal)}</p><p><strong>Additional charge total</strong><br />{money.format(additionalChargeTotal)}</p><p><strong>Discount</strong><br />{selected.discount_percent || 0}% / {money.format(selected.discount_amount || 0)}</p><p><strong>Tax / Service</strong><br />{money.format(selected.tax_amount || 0)} / {money.format(selected.service_amount || 0)}</p><p><strong>Grand Total</strong><br />{money.format(selected.grand_total || 0)}</p><p><strong>Payment Total</strong><br />{money.format(selected.paid_amount || 0)}</p><p><strong>Refund Total</strong><br />{money.format(selected.refund_amount || 0)}</p><p><strong>Balance Due</strong><br />{money.format(selected.balance_due || 0)}</p></div></div><div className="card table-card"><h2>Breakdown Item Type</h2><table><thead><tr><th>Kategori</th><th>Jumlah Item</th><th>Total Nominal</th></tr></thead><tbody>{breakdownRows.map((row) => <tr key={row.type}><td>{row.type}</td><td>{row.count}</td><td>{money.format(row.total)}</td></tr>)}</tbody></table><small>Item void/is_void tidak dihitung dalam ringkasan.</small></div></>}<div className="card"><div className="action-bar"><div className="action-group"><IconButton icon={faPlus} label="Reservasi" title="Add Reservation" variant="primary" onClick={() => setActiveTab('reservations')} /><IconButton icon={faPlus} label="Charge" title="Add Charge" variant="primary" onClick={() => setActiveTab('charges')} /><IconButton icon={faCreditCard} label="Bayar di P.O.S" title="Bayar di P.O.S" variant="primary" onClick={() => navigate(`/pos?folio_id=${selected.id}`)} /><IconButton icon={faRotateLeft} label="Refund di P.O.S" title="Refund di P.O.S" variant="secondary" onClick={() => navigate(`/pos?folio_id=${selected.id}`)} /></div></div><form className="inline-form" onSubmit={(e) => { e.preventDefault(); run('discount', () => foliosApi.updateDiscount(selected.id, discount, profile?.role), 'Discount folio tersimpan.'); }}><label>Discount %<input type="number" min="0" max="100" value={discount} onChange={(e) => setDiscount(e.target.value)} /></label><IconButton icon={faFloppyDisk} label="Apply Discount" title="Apply Discount" type="submit" disabled={saving === 'discount'} variant="primary" /></form></div></div>}
@@ -410,19 +411,24 @@ function PaymentForm({ state, setter, onSubmit, saving, refund = false }) {
   </form>;
 }
 
-function FolioHeader({ folio, guestName, billingStatus, onClose, onPayDebt, saving }) {
+function FolioHeader({ folio, guestName, roomText, billingStatus, onClose, onPayDebt, onAddCharge, saving }) {
   const balanceDue = Number(folio?.balance_due || 0);
   return <div className="card folio-summary-card">
     <div className="folio-summary-main">
       <div><span>No Folio</span><strong>{folio?.folio_number || '-'}</strong></div>
-      <div><span>Nama tamu/customer</span><strong>{guestName || '-'}</strong></div>
+      <div><span>Nama tamu</span><strong>{guestName || '-'}</strong></div>
+      <div><span>Kamar</span><strong>{roomText || '-'}</strong></div>
       <div><span>Grand Total</span><strong>{money.format(folio?.grand_total || 0)}</strong></div>
+      <div><span>Paid</span><strong>{money.format(folio?.paid_amount || 0)}</strong></div>
+      <div><span>Balance</span><strong>{money.format(balanceDue)}</strong></div>
     </div>
     <div className="folio-summary-actions">
       <span className={`badge ${folio?.status || 'open'}`}>{folio?.status || '-'}</span>
       <span className={`badge ${billingStatus}`}>{getBillingStatusLabel(folio || {})}</span>
+      <button type="button" onClick={onAddCharge}>Add Charge</button>
+      <Link className="button-link secondary-link" to="/front-office">Pindah Kamar</Link>
       {balanceDue > 0 && <IconButton icon={faMoneyBillWave} label="Bayar Debt" title="Bayar Debt" variant="primary" onClick={onPayDebt} />}
-      <Link className="button-link" to={`/pos?folio_id=${folio?.id || ''}`}>Open P.O.S</Link><IconButton icon={faLock} label={balanceDue > 0 ? 'Close / Mark Debt' : 'Close Folio'} title="Close Folio" disabled={saving} variant="primary" onClick={onClose} />
+      <Link className="button-link" to={`/pos?folio_id=${folio?.id || ''}`}>Bayar di P.O.S</Link><IconButton icon={faLock} label={balanceDue > 0 ? 'Close / Mark Debt' : 'Close Folio'} title="Close Folio" disabled={saving} variant="secondary" onClick={onClose} />
     </div>
   </div>;
 }
