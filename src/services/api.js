@@ -1,5 +1,6 @@
 import { requireSupabase } from '../config/supabase';
-import { getFriendlySupabaseError, isRateLimitError } from '../utils/supabaseError';
+import { getFriendlySupabaseError, handleSupabaseError, isRateLimitError, safeSupabaseQuery } from '../utils/supabaseError';
+import { normalizePOSStatus } from '../utils/posStatus';
 import {
   FO_STATUSES,
   HK_STATUSES,
@@ -11,7 +12,7 @@ import {
   isReadyForReservation
 } from '../utils/roomStatus';
 
-export { FO_STATUSES, HK_STATUSES, getFriendlySupabaseError, isRateLimitError };
+export { FO_STATUSES, HK_STATUSES, getFriendlySupabaseError, handleSupabaseError, isRateLimitError, safeSupabaseQuery, normalizePOSStatus };
 export const ROOM_STATUSES = ['available', 'unavailable', ...HK_STATUSES];
 export const RESERVATION_STATUSES = ['reserved', 'checked_in', 'checked_out', 'cancelled', 'no_show'];
 export const INVOICE_STATUSES = ['unpaid', 'partial', 'paid', 'refunded'];
@@ -37,11 +38,24 @@ const invoiceNumber = (prefix = 'INV') => `${prefix || 'INV'}-${Date.now()}`;
 const folioNumber = () => `FOL-${Date.now()}`;
 const billDatePart = (value = new Date()) => value.toISOString().slice(0, 10).replaceAll('-', '');
 const moneyValue = (value) => Number(value || 0);
+let cachedAuthUser = null;
+let cachedAuthUserAt = 0;
+async function getCachedAuthUser() {
+  const now = Date.now();
+  if (cachedAuthUser && now - cachedAuthUserAt < 30000) return cachedAuthUser;
+  const { data } = await requireSupabase().auth.getSession();
+  cachedAuthUser = data?.session?.user || null;
+  cachedAuthUserAt = now;
+  return cachedAuthUser;
+}
 export const isOutOfInventoryHk = isOutOfInventoryStatus;
 export const isOccupiedHk = isOccupiedStatus;
 
 function raise(error) {
-  if (error) throw new Error(getFriendlySupabaseError(error));
+  if (error) {
+    handleSupabaseError(error, 'API');
+    throw new Error(getFriendlySupabaseError(error));
+  }
 }
 
 function parsePgError(error, fallback) {
@@ -207,12 +221,12 @@ const staySelect = '*, guests(*), rooms(*, room_types(*)), reservations(*, guest
 
 export async function logAuditEvent(action, entityType, entityId, changes = {}) {
   try {
-    const { data: userData } = await requireSupabase().auth.getUser();
+    const user = await getCachedAuthUser();
     const { error } = await requireSupabase().from('audit_logs').insert({
       action,
       table_name: entityType,
       record_id: entityId || null,
-      actor_id: userData?.user?.id || null,
+      actor_id: user?.id || null,
       payload: changes
     });
     if (error) console.warn('Audit log gagal disimpan:', error.message);
@@ -658,7 +672,7 @@ function normalizeFolio(folio) {
   const payments = folio.folio_payments || [];
   return {
     ...folio,
-    folio_items: items.map((item) => ({ ...item, is_void: item.is_void ?? false, line_total: moneyValue(item.line_total ?? (moneyValue(item.qty) * moneyValue(item.unit_price))) })),
+    folio_items: items.map((item) => ({ ...item, is_void: item.is_void ?? false, payment_status: item.payment_status || 'unpaid', paid_amount: moneyValue(item.paid_amount), line_total: moneyValue(item.line_total ?? (moneyValue(item.qty) * moneyValue(item.unit_price))) })),
     folio_payments: payments
   };
 }
@@ -774,10 +788,12 @@ export const foliosApi = {
     const taxAmount = taxableBase * moneyValue(hotel.tax_percent) / 100;
     const serviceAmount = taxableBase * moneyValue(hotel.service_charge_percent) / 100;
     const grandTotal = Math.max(taxableBase + taxAmount + serviceAmount, 0);
-    const paidAmount = payments.filter((payment) => payment.payment_type === 'payment').reduce((sum, payment) => sum + moneyValue(payment.amount), 0);
+    const paidByItems = items.filter((item) => item.payment_status === 'paid').reduce((sum, item) => sum + Math.max(itemTotal(item), 0), 0);
+    const paidAmount = payments.filter((payment) => payment.payment_type === 'payment').reduce((sum, payment) => sum + moneyValue(payment.amount), 0) || paidByItems;
     const refundAmount = payments.filter((payment) => payment.payment_type === 'refund').reduce((sum, payment) => sum + moneyValue(payment.amount), 0);
     const balanceDue = Math.max(grandTotal - paidAmount + refundAmount, 0);
     let status = nextStatus || folio.status || 'open';
+    if (!nextStatus) status = balanceDue <= 0 && paidAmount > 0 ? 'closed' : paidAmount > 0 ? 'debt' : 'open';
     if (status === 'closed' && balanceDue > 0) status = 'debt';
     if (status === 'debt' && balanceDue <= 0) status = 'closed';
     if (refundAmount >= paidAmount && paidAmount > 0 && nextStatus === 'refunded') status = 'refunded';
@@ -819,11 +835,11 @@ export const foliosApi = {
     assertSuperAdmin(role);
     const before = await this.getFolio(folioId).then((folio) => (folio.folio_items || []).find((item) => item.id === itemId));
     if (!before) throw new Error('Folio item tidak ditemukan.');
-    const { data: userData } = await requireSupabase().auth.getUser();
+    const user = await getCachedAuthUser();
     const { data, error } = await requireSupabase().from('folio_items').update({
       is_void: true,
       void_reason: reason || 'Void by super admin',
-      voided_by: userData?.user?.id || null,
+      voided_by: user?.id || null,
       voided_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     }).eq('id', itemId).eq('folio_id', folioId).select('*').single();
@@ -918,6 +934,57 @@ export const foliosApi = {
     await logAuditEvent(payload.payment_type === 'refund' ? 'refund_folio' : 'add_folio_payment', 'folio_payments', data.id, { ...payload, bill_no: billNo });
     return updated;
   },
+
+  async addItemizedPayment(folioId, payload, role = '', cashierId = '') {
+    assertPosCashier(role);
+    if (!folioId) throw new Error('Pilih folio terlebih dahulu.');
+    const selectedIds = [...new Set(payload.selected_item_ids || [])];
+    if (selectedIds.length === 0) throw new Error('Pilih minimal 1 item tagihan.');
+    const { paymentGroup, paymentMethod, amount } = validatePaymentPayload({ ...payload, amount: payload.amount });
+    const folio = await this.getFolio(folioId);
+    const payableItems = (folio.folio_items || []).filter((item) => {
+      const total = moneyValue(item.line_total ?? moneyValue(item.qty) * moneyValue(item.unit_price));
+      return selectedIds.includes(item.id) && item.folio_id === folioId && item.is_void !== true && total > 0 && !['paid', 'cancelled', 'refunded', 'void'].includes(String(item.payment_status || 'unpaid').toLowerCase());
+    });
+    if (payableItems.length !== selectedIds.length) throw new Error('Sebagian item tidak valid, sudah paid, void, cancelled, refunded, atau bukan milik folio ini. Muat ulang data.');
+    const selectedTotal = payableItems.reduce((sum, item) => sum + moneyValue(item.line_total ?? moneyValue(item.qty) * moneyValue(item.unit_price)), 0);
+    if (selectedTotal <= 0) throw new Error('Total item terpilih harus lebih dari 0.');
+    if (amount !== selectedTotal) throw new Error('Pembayaran sebagian per item belum didukung. Nominal harus sama dengan total item terpilih.');
+    const billNo = payload.bill_no || await nextBillNumber();
+    const { data: payment, error } = await requireSupabase().from('folio_payments').insert({
+      folio_id: folioId,
+      payment_type: 'payment',
+      payment_group: paymentGroup,
+      payment_method: paymentMethod,
+      amount: selectedTotal,
+      bill_no: billNo,
+      cashier_id: cashierId || null,
+      payment_status: 'posted',
+      reference_number: payload.reference_number || null,
+      card_or_account_number: payload.card_or_account_number || null,
+      notes: payload.notes || null,
+      paid_at: payload.paid_at || new Date().toISOString()
+    }).select('*').single();
+    if (error) throw new Error(parsePgError(error, 'Gagal menyimpan payment itemized.'));
+    const detailRows = payableItems.map((item) => ({
+      folio_payment_id: payment.id,
+      folio_id: folioId,
+      folio_item_id: item.id,
+      description: item.description || '-',
+      item_type: item.item_type || 'charge',
+      qty: moneyValue(item.qty) || 1,
+      unit_price: moneyValue(item.unit_price),
+      amount: moneyValue(item.line_total ?? moneyValue(item.qty) * moneyValue(item.unit_price))
+    }));
+    const { error: itemError } = await requireSupabase().from('folio_payment_items').insert(detailRows);
+    if (itemError) throw new Error(parsePgError(itemError, 'Gagal menyimpan detail item bill. Payment header sudah dibuat; hubungi admin untuk rekonsiliasi.'));
+    const markResults = await Promise.all(payableItems.map((item) => requireSupabase().from('folio_items').update({ payment_status: 'paid', paid_at: payment.paid_at, paid_bill_id: payment.id, paid_amount: moneyValue(item.line_total ?? moneyValue(item.qty) * moneyValue(item.unit_price)), updated_at: new Date().toISOString() }).eq('id', item.id).eq('folio_id', folioId)));
+    const markError = markResults.find((result) => result.error)?.error;
+    if (markError) throw new Error(parsePgError(markError, 'Gagal update status paid item.'));
+    const updated = await this.recalculateFolioTotals(folioId);
+    await logAuditEvent('add_itemized_pos_payment', 'folio_payments', payment.id, { folio_id: folioId, bill_no: billNo, selected_item_ids: selectedIds, total: selectedTotal });
+    return { folio: updated, payment, items: detailRows };
+  },
   async updateDiscount(folioId, discount_percent, role = '') {
     const folio = await this.getFolio(folioId);
     if (['closed', 'cancelled', 'refunded'].includes(folio.status) && !['super_admin', 'manager'].includes(role)) throw new Error('Discount folio closed hanya bisa diubah manager/super admin.');
@@ -975,7 +1042,7 @@ export const posApi = {
     const status = filters.status || 'all';
     const dateFrom = filters.dateFrom || '';
     const dateTo = filters.dateTo || '';
-    const normalizeStatus = (value = '') => ['closed', 'paid', 'settled', 'lunas'].includes(String(value).toLowerCase()) ? 'close' : 'open';
+    const normalizeStatus = (value = '') => normalizePOSStatus(value).toLowerCase();
     const inDateRange = (value) => {
       const date = String(value || '').slice(0, 10);
       if (!date) return !dateFrom && !dateTo;
@@ -1049,10 +1116,7 @@ export const posApi = {
     return { totalCharge, totalAdjustment, totalPayment, totalRefund, grandTotal, balance, status: folio?.status || 'open' };
   },
   async postPayment(folioId, payload, role = '', cashierId = '') {
-    assertPosCashier(role);
-    if (!folioId) throw new Error('Pilih folio terlebih dahulu.');
-    if (moneyValue(payload.amount) <= 0) throw new Error('Nominal pembayaran harus lebih besar dari 0.');
-    return foliosApi.addFolioPayment(folioId, { ...payload, payment_type: 'payment', cashier_id: cashierId });
+    return foliosApi.addItemizedPayment(folioId, payload, role, cashierId);
   },
   async postAdjustment(folioId, payload, role = '') {
     assertPosCashier(role);
@@ -1179,7 +1243,7 @@ export const staysApi = {
     }
     await roomsApi.updateHkStatus({ id: oldRoomId, fo_status: 'available', hk_status: normalized.rooms?.hk_status || 'OC' }, 'VD', { role: 'manager', allowGroupChange: true, notes: `Room move: ${reason}` });
     await roomsApi.updateHkStatus(newRoom, 'OC', { role: 'manager', allowGroupChange: true, notes: `Room move: ${reason}` });
-    const { data: userData } = await requireSupabase().auth.getUser().catch(() => ({ data: null }));
+    const user = await getCachedAuthUser().catch(() => null);
     try {
       const { error: logError } = await requireSupabase().from('room_move_logs').insert({
         stay_id: normalized.id,
@@ -1188,7 +1252,7 @@ export const staysApi = {
         old_room_id: oldRoomId,
         new_room_id: newRoomId,
         reason: reason.trim(),
-        moved_by: userData?.user?.id || null
+        moved_by: user?.id || null
       });
       if (logError) console.warn('Room move log gagal:', logError.message);
     } catch (logError) {

@@ -36,6 +36,7 @@ export default function BillingPage() {
   const [extendStay, setExtendStay] = useState(null);
   const [debtPayment, setDebtPayment] = useState({ ...emptyPayment, paid_at: today() });
   const [discount, setDiscount] = useState(0);
+  const [guestModal, setGuestModal] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState('');
   const [error, setError] = useState('');
@@ -53,6 +54,7 @@ export default function BillingPage() {
   const refunds = (selected?.folio_payments || []).filter((item) => item.payment_type === 'refund');
   const canManageItems = profile?.role === 'super_admin';
   const canManageReservations = ['admin', 'super_admin'].includes(profile?.role);
+  const canAddGuest = ['admin', 'super_admin', 'frontdesk', 'receptionist'].includes(profile?.role);
   const billingStatus = getBillingStatus(selected);
   const activeItems = (selected?.folio_items || []).filter((item) => item.is_void !== true);
   const itemTypes = ['room', 'extra_bed', 'breakfast', 'early_checkin', 'late_checkout', 'laundry', 'restaurant', 'minibar', 'other', 'cancellation_fee', 'no_show_fee', 'adjustment'];
@@ -109,6 +111,7 @@ export default function BillingPage() {
       setEditReservation(null);
       setExtendStay(null);
       setDebtPayment({ ...emptyPayment, paid_at: today() });
+      setGuestModal(null);
     }
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
@@ -308,7 +311,7 @@ export default function BillingPage() {
           return { selectedId: folio.id };
         }, 'Folio baru berhasil dibuat.'); }}>
           <h2>Buat Folio Baru</h2>
-          <label className="full">Guest<select required value={newFolio.guest_id} onChange={(e) => setNewFolio({ ...newFolio, guest_id: e.target.value })}><option value="">Pilih tamu</option>{guests.map((guest) => <option key={guest.id} value={guest.id}>{guest.full_name}{guest.phone ? ` - ${guest.phone}` : ''}</option>)}</select></label>
+          <GuestPicker guests={guests} value={newFolio.guest_id} onChange={(guest_id) => setNewFolio({ ...newFolio, guest_id })} onAddGuest={canAddGuest ? () => setGuestModal({ target: 'newFolio', full_name: '', phone: '', email: '', identity_number: '', address: '', notes: '' }) : null} />
           <label className="full">Notes<textarea value={newFolio.notes} onChange={(e) => setNewFolio({ ...newFolio, notes: e.target.value })} /></label>
           <div className="button-row"><IconButton icon={faFloppyDisk} label={saving === 'new-folio' ? 'Membuat...' : 'Simpan Folio'} title="Simpan Folio" type="submit" disabled={saving === 'new-folio'} variant="primary" /><button type="button" className="secondary" onClick={() => setShowNewFolio(false)}>Batal</button></div>
         </form>}
@@ -367,10 +370,19 @@ export default function BillingPage() {
 
         {activeTab === 'refund' && <div className="page-stack"><div className="card action-card"><div className="action-bar"><div><h2>Refund / Adjustment Diproses di P.O.S</h2><p className="muted">Cancellation, refund, dan correction dibuat sebagai transaksi minus baru. Transaksi lama tidak dihapus.</p></div><Link className="button-link" to={`/pos?folio_id=${selected.id}`}>Open P.O.S</Link></div></div><PaymentTable title="Refund History" rows={refunds} /></div>}
         {editReservation && <ReservationEditModal state={editReservation} rooms={allRooms} roomTypes={roomTypes} saving={saving === `edit-reservation-${editReservation.id}`} onChange={updateEditReservation} onClose={() => setEditReservation(null)} onSubmit={(event) => { event.preventDefault(); run(`edit-reservation-${editReservation.id}`, async () => { await reservationsApi.updateFromFolio(editReservation.id, editReservation, profile?.role); setEditReservation(null); }, 'Reservasi berhasil diupdate dari Folio.'); }} />}
+        {guestModal && <GuestModal state={guestModal} saving={saving === 'guest-modal'} onChange={(field, value) => setGuestModal((current) => ({ ...current, [field]: value }))} onClose={() => setGuestModal(null)} onSubmit={(event) => { event.preventDefault(); run('guest-modal', async () => { if (!canAddGuest) throw new Error('Role ini tidak boleh tambah tamu.'); const guest = await guestsApi.create(guestModal); setGuests((rows) => [guest, ...rows.filter((row) => row.id !== guest.id)]); setNewFolio((current) => ({ ...current, guest_id: guest.id })); setReservationForm((current) => ({ ...current, guest_id: guest.id })); setGuestModal(null); return { selectedId }; }, 'Tamu baru berhasil ditambahkan dan dipilih.'); }} />}
         {extendStay && <ExtendStayModal state={extendStay} saving={saving === `extend-${extendStay.reservation.id}`} onChange={updateExtendStay} onClose={() => setExtendStay(null)} onSubmit={(event) => { event.preventDefault(); run(`extend-${extendStay.reservation.id}`, async () => { await foliosApi.extendStay(selected.id, extendStay.reservation, extendStay); setExtendStay(null); }, 'Extend stay berhasil. Charge tambahan masuk ke folio.'); }} />}
       </div> : <div className="card muted">Pilih atau buat folio untuk mulai input billing.</div>}
     </div>
   </div>;
+}
+
+function GuestPicker({ guests, value, onChange, onAddGuest }) {
+  return <label className="full">Guest<div className="inline-form"><select required value={value} onChange={(e) => onChange(e.target.value)}><option value="">Pilih tamu</option>{guests.map((guest) => <option key={guest.id} value={guest.id}>{guest.full_name}{guest.phone ? ` - ${guest.phone}` : ''}</option>)}{onAddGuest && <option value="" disabled>──────────</option>}</select>{onAddGuest && <button type="button" className="secondary" onClick={onAddGuest}>+ Tambah Tamu Baru</button>}</div></label>;
+}
+
+function GuestModal({ state, saving, onChange, onClose, onSubmit }) {
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="new-guest-title"><div className="modal-header"><h2 id="new-guest-title">Tambah Tamu Baru</h2><button type="button" className="modal-close" onClick={onClose} aria-label="Tutup">×</button></div><form className="form-grid" onSubmit={onSubmit}><label>Nama tamu<input required autoFocus value={state.full_name || ''} onChange={(e) => onChange('full_name', e.target.value)} /></label><label>No HP<input value={state.phone || ''} onChange={(e) => onChange('phone', e.target.value)} /></label><label>Email<input type="email" value={state.email || ''} onChange={(e) => onChange('email', e.target.value)} /></label><label>No identitas/KTP/passport<input value={state.identity_number || ''} onChange={(e) => onChange('identity_number', e.target.value)} /></label><label className="full">Alamat<textarea value={state.address || ''} onChange={(e) => onChange('address', e.target.value)} /></label><label className="full">Catatan<textarea value={state.notes || ''} onChange={(e) => onChange('notes', e.target.value)} /></label><div className="button-row full"><button disabled={saving}>{saving ? 'Menyimpan...' : 'Simpan & Pilih Tamu'}</button><button type="button" className="secondary" onClick={onClose}>Batal</button></div></form></section></div>;
 }
 
 function FolioTable({ title, rows, columns, render }) {
