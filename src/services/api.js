@@ -240,7 +240,7 @@ export const hotelSettingsApi = {
     const { data, error } = await requireSupabase().from('hotel_settings').select('*').order('created_at').limit(1).maybeSingle();
     raise(error);
     return data || {
-      hotel_name: 'Hotel', address: '', phone: '', tax_percent: 0, service_charge_percent: 0,
+      hotel_name: 'Hotel', address: '', phone: '', tax_percent: 0, tax_mode: 'exclusive', service_charge_percent: 0,
       invoice_prefix: 'INV', default_checkin_time: '14:00', default_checkout_time: '12:00'
     };
   },
@@ -252,6 +252,7 @@ export const hotelSettingsApi = {
       address: payload.address || null,
       phone: payload.phone || null,
       tax_percent: moneyValue(payload.tax_percent),
+      tax_mode: payload.tax_mode === 'inclusive' ? 'inclusive' : 'exclusive',
       service_charge_percent: moneyValue(payload.service_charge_percent),
       invoice_prefix: payload.invoice_prefix?.trim() || 'INV',
       default_checkin_time: payload.default_checkin_time || '14:00',
@@ -677,6 +678,40 @@ function normalizeFolio(folio) {
   };
 }
 
+
+export function calculateFolioTaxService(subtotal = 0, hotel = {}) {
+  const safeSubtotal = moneyValue(subtotal);
+  const taxPercent = moneyValue(hotel.tax_percent);
+  const servicePercent = moneyValue(hotel.service_charge_percent);
+  const taxMode = hotel.tax_mode === 'inclusive' ? 'inclusive' : 'exclusive';
+  const taxAmount = taxMode === 'inclusive' && taxPercent > 0
+    ? safeSubtotal - (safeSubtotal / (1 + taxPercent / 100))
+    : safeSubtotal * taxPercent / 100;
+  const serviceAmount = safeSubtotal * servicePercent / 100;
+  const grandTotal = taxMode === 'inclusive'
+    ? Math.max(safeSubtotal + serviceAmount, 0)
+    : Math.max(safeSubtotal + taxAmount + serviceAmount, 0);
+  return { taxMode, taxAmount, serviceAmount, grandTotal };
+}
+
+function dailyRoomChargeRows(reservation, stay = null, startDate = '', endDate = '') {
+  const normalized = normalizeReservation(reservation);
+  const first = startDate || normalized.check_in_date;
+  const lastExclusive = endDate || normalized.check_out_date;
+  const rate = moneyValue(normalized.room_rate);
+  const roomNumber = normalized.rooms?.room_number || stay?.rooms?.room_number || '';
+  return eachDate(first, addDaysToDate(lastExclusive, -1)).map((date) => ({
+    reservation_id: normalized.id,
+    stay_id: stay?.id || null,
+    room_id: stay?.room_id || normalized.room_id || null,
+    item_type: 'room',
+    description: `${roomNumber ? `${roomNumber} | ` : ''}${date}`,
+    qty: 1,
+    unit_price: rate,
+    posting_date: date
+  }));
+}
+
 function validatePaymentPayload(payload) {
   const paymentGroup = payload.payment_group || (payload.payment_method === 'cash' ? 'cash' : 'non_tunai');
   const paymentMethod = paymentGroup === 'cash' ? 'cash' : payload.payment_method;
@@ -785,9 +820,7 @@ export const foliosApi = {
     const manualDiscount = items.filter((item) => item.item_type === 'discount').reduce((sum, item) => sum + Math.abs(itemTotal(item)), 0);
     const discountAmount = Math.min(chargeSubtotal, (chargeSubtotal * discountPercent / 100) + manualDiscount);
     const taxableBase = Math.max(chargeSubtotal - discountAmount, 0);
-    const taxAmount = taxableBase * moneyValue(hotel.tax_percent) / 100;
-    const serviceAmount = taxableBase * moneyValue(hotel.service_charge_percent) / 100;
-    const grandTotal = Math.max(taxableBase + taxAmount + serviceAmount, 0);
+    const { taxAmount, serviceAmount, grandTotal } = calculateFolioTaxService(taxableBase, hotel);
     const paidByItems = items.filter((item) => item.payment_status === 'paid').reduce((sum, item) => sum + Math.max(itemTotal(item), 0), 0);
     const paidAmount = payments.filter((payment) => payment.payment_type === 'payment').reduce((sum, payment) => sum + moneyValue(payment.amount), 0) || paidByItems;
     const refundAmount = payments.filter((payment) => payment.payment_type === 'refund').reduce((sum, payment) => sum + moneyValue(payment.amount), 0);
@@ -850,38 +883,15 @@ export const foliosApi = {
   },
   async addRoomChargeOnce(folioId, reservation, stay = null) {
     const folio = await this.getFolio(folioId);
-    const exists = (folio.folio_items || []).some((item) => item.item_type === 'room' && item.reservation_id === reservation.id && (!stay?.id || item.stay_id === stay.id));
-    if (exists) return folio;
-    const nights = Math.max(Number(reservation.nights || nightsBetween(reservation.check_in_date, reservation.check_out_date) || 1), 1);
-    return this.addFolioItem(folioId, {
-      reservation_id: reservation.id,
-      stay_id: stay?.id || null,
-      room_id: stay?.room_id || reservation.room_id || null,
-      item_type: 'room',
-      description: `Room charge ${reservation.rooms?.room_number || ''} x ${nights} malam`,
-      qty: nights,
-      unit_price: moneyValue(reservation.room_rate)
-    });
+    const rows = dailyRoomChargeRows(reservation, stay).filter((row) => moneyValue(row.unit_price) > 0 && !(folio.folio_items || []).some((item) => item.is_void !== true && item.item_type === 'room' && item.room_id === row.room_id && item.posting_date === row.posting_date));
+    if (!rows.length) return folio;
+    const { error } = await requireSupabase().from('folio_items').insert(rows.map((row) => ({ folio_id: folioId, ...validateFolioItemPayload(folioId, row) })));
+    if (error) throw new Error(parsePgError(error, 'Gagal membuat room charge harian.'));
+    await logAuditEvent('add_daily_room_charges', 'folio_items', null, { folio_id: folioId, reservation_id: reservation.id, count: rows.length });
+    return this.recalculateFolioTotals(folioId);
   },
   async syncReservationRoomCharge(folioId, reservation) {
-    const normalized = normalizeReservation(reservation);
-    const folio = await this.getFolio(folioId);
-    const nights = Math.max(Number(normalized.nights || nightsBetween(normalized.check_in_date, normalized.check_out_date) || 1), 1);
-    const existing = (folio.folio_items || []).find((item) => item.item_type === 'room' && item.reservation_id === normalized.id && item.is_void !== true);
-    const body = {
-      reservation_id: normalized.id,
-      room_id: normalized.room_id || null,
-      item_type: 'room',
-      description: `Room charge ${normalized.rooms?.room_number || ''} x ${nights} malam`,
-      qty: nights,
-      unit_price: moneyValue(normalized.room_rate),
-      posting_date: normalized.check_in_date || today()
-    };
-    if (!existing) return this.addFolioItem(folioId, body);
-    const { error } = await requireSupabase().from('folio_items').update({ ...body, updated_at: new Date().toISOString() }).eq('id', existing.id).eq('folio_id', folioId);
-    if (error) throw new Error(parsePgError(error, 'Gagal sync room charge reservasi.'));
-    await logAuditEvent('sync_reservation_room_charge', 'folio_items', existing.id, body);
-    return this.recalculateFolioTotals(folioId);
+    return this.addRoomChargeOnce(folioId, normalizeReservation(reservation));
   },
   async extendStay(folioId, reservation, payload = {}) {
     const normalized = normalizeReservation(reservation);
@@ -898,15 +908,7 @@ export const foliosApi = {
     const rate = payload.extra_nightly_rate === '' || payload.extra_nightly_rate == null ? moneyValue(normalized.room_rate) : moneyValue(payload.extra_nightly_rate);
     if (rate <= 0) throw new Error('Tarif tambahan per malam wajib diisi karena rate kamar belum tersedia.');
     const updated = await reservationsApi.update(normalized.id, { ...normalized, check_out_date: newCheckout, checkout_date: newCheckout });
-    await this.addFolioItem(folioId, {
-      reservation_id: normalized.id,
-      room_id: normalized.room_id || null,
-      item_type: 'room',
-      description: `Extend stay ${normalized.reservation_code || ''}: ${oldCheckout} ke ${newCheckout}`,
-      qty: extraNights,
-      unit_price: rate,
-      posting_date: oldCheckout || today()
-    });
+    await this.addRoomChargeOnce(folioId, { ...updated, room_rate: rate }, null);
     await logAuditEvent('extend_stay', 'reservations', normalized.id, { old_checkout: oldCheckout, new_checkout: newCheckout, extra_nights: extraNights, rate });
     return this.getFolio(folioId);
   },
@@ -984,6 +986,23 @@ export const foliosApi = {
     const updated = await this.recalculateFolioTotals(folioId);
     await logAuditEvent('add_itemized_pos_payment', 'folio_payments', payment.id, { folio_id: folioId, bill_no: billNo, selected_item_ids: selectedIds, total: selectedTotal });
     return { folio: updated, payment, items: detailRows };
+  },
+  async addFolioPartialPayment(folioId, payload, role = '', cashierId = '') {
+    assertPosCashier(role);
+    const { paymentGroup, paymentMethod, amount } = validatePaymentPayload(payload);
+    const folio = await this.getFolio(folioId);
+    if (amount > moneyValue(folio.balance_due)) throw new Error('Payment melebihi balance due. Overpayment belum diaktifkan.');
+    const billNo = payload.bill_no || await nextBillNumber();
+    const { data: payment, error } = await requireSupabase().from('folio_payments').insert({
+      folio_id: folioId, payment_type: 'payment', payment_group: paymentGroup, payment_method: paymentMethod,
+      amount, bill_no: billNo, cashier_id: cashierId || null, payment_status: 'posted',
+      reference_number: payload.reference_number || null, card_or_account_number: payload.card_or_account_number || null,
+      notes: payload.notes || null, paid_at: payload.paid_at || new Date().toISOString()
+    }).select('*').single();
+    if (error) throw new Error(parsePgError(error, 'Gagal menyimpan partial payment.'));
+    const updated = await this.recalculateFolioTotals(folioId);
+    await logAuditEvent('add_pos_partial_payment', 'folio_payments', payment.id, { folio_id: folioId, bill_no: billNo, amount });
+    return { folio: updated, payment, items: [] };
   },
   async updateDiscount(folioId, discount_percent, role = '') {
     const folio = await this.getFolio(folioId);
@@ -1116,7 +1135,7 @@ export const posApi = {
     return { totalCharge, totalAdjustment, totalPayment, totalRefund, grandTotal, balance, status: folio?.status || 'open' };
   },
   async postPayment(folioId, payload, role = '', cashierId = '') {
-    return foliosApi.addItemizedPayment(folioId, payload, role, cashierId);
+    return (payload.selected_item_ids || []).length ? foliosApi.addItemizedPayment(folioId, payload, role, cashierId) : foliosApi.addFolioPartialPayment(folioId, payload, role, cashierId);
   },
   async postAdjustment(folioId, payload, role = '') {
     assertPosCashier(role);

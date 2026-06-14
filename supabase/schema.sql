@@ -58,6 +58,7 @@ create table if not exists hotel_settings (
   phone text,
   logo_url text,
   tax_percent numeric(5,2) not null default 0,
+  tax_mode text not null default 'exclusive',
   service_charge_percent numeric(5,2) not null default 0,
   invoice_prefix text default 'INV',
   default_checkin_time time default '14:00',
@@ -431,8 +432,8 @@ create policy "authenticated read payments" on payments for select to authentica
 create policy "authenticated manage payments" on payments for all to authenticated using (true) with check (true);
 
 -- Seed data, idempotent.
-insert into hotel_settings (hotel_name,address,phone,tax_percent,service_charge_percent)
-select 'Hotel Management System','Jakarta','+62 21 0000',10,5
+insert into hotel_settings (hotel_name,address,phone,tax_percent,tax_mode,service_charge_percent)
+select 'Hotel Management System','Jakarta','+62 21 0000',10,'exclusive',5
 where not exists (select 1 from hotel_settings);
 
 with seed_room_types (code, name, base_rate, base_price, max_occupancy, facilities) as (
