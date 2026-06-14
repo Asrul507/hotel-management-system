@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FO_STATUSES, hotelSettingsApi, roomTypesApi, roomsApi } from '../services/api';
 import { HK_STATUSES, allowedNextHkStatuses, deriveFoStatusFromHkStatus } from '../utils/roomStatus';
+import IconButton from '../components/IconButton';
+import { faPenToSquare } from '@fortawesome/free-solid-svg-icons';
 
-const hotelFormEmpty = { hotel_name: '', address: '', phone: '', tax_percent: 0, service_charge_percent: 0, invoice_prefix: 'INV', default_checkin_time: '14:00', default_checkout_time: '12:00' };
+const hotelFormEmpty = { hotel_name: '', address: '', phone: '', tax_percent: 0, service_charge_percent: 0, tax_mode: 'exclusive', invoice_prefix: 'INV', default_checkin_time: '14:00', default_checkout_time: '12:00' };
 const typeFormEmpty = { code: '', name: '', description: '', base_rate: 0, max_occupancy: 2, facilities: '', is_active: true };
 const roomFormEmpty = { room_number: '', room_type_id: '', floor: '', fo_status: 'available', hk_status: 'VC', is_active: true, notes: '' };
 const money = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 });
@@ -93,6 +95,7 @@ export default function MasterSettingsPage() {
       <label>Telepon<input value={hotelForm.phone || ''} onChange={(e) => setHotelForm({ ...hotelForm, phone: e.target.value })} /></label>
       <label>Pajak %<input type="number" min="0" step="0.01" value={hotelForm.tax_percent ?? 0} onChange={(e) => setHotelForm({ ...hotelForm, tax_percent: e.target.value })} /></label>
       <label>Service %<input type="number" min="0" step="0.01" value={hotelForm.service_charge_percent ?? 0} onChange={(e) => setHotelForm({ ...hotelForm, service_charge_percent: e.target.value })} /></label>
+      <label>Tax Mode<select value={hotelForm.tax_mode || 'exclusive'} onChange={(e) => setHotelForm({ ...hotelForm, tax_mode: e.target.value })}><option value="exclusive">Exclusive Tax</option><option value="inclusive">Inclusive Tax</option></select></label>
       <label>Invoice prefix<input value={hotelForm.invoice_prefix || 'INV'} onChange={(e) => setHotelForm({ ...hotelForm, invoice_prefix: e.target.value })} /></label>
       <label>Default check-in<input type="time" value={hotelForm.default_checkin_time || '14:00'} onChange={(e) => setHotelForm({ ...hotelForm, default_checkin_time: e.target.value })} /></label>
       <label>Default check-out<input type="time" value={hotelForm.default_checkout_time || '12:00'} onChange={(e) => setHotelForm({ ...hotelForm, default_checkout_time: e.target.value })} /></label>
