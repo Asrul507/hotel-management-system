@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { NON_CASH_METHODS, posApi, today } from '../services/api';
+import { normalizePOSStatus } from '../utils/posStatus';
 import { useAuth } from '../contexts/AuthContext';
 import { useAppDialog } from '../components/AppDialog';
 import IconButton from '../components/IconButton';
@@ -12,9 +13,6 @@ const defaultFilters = () => ({ dateFrom: addDays(today(), -7), dateTo: today(),
 const paymentEmpty = { amount: '', payment_group: 'cash', payment_method: 'cash', paid_at: new Date().toISOString().slice(0, 16), reference_number: '', notes: '' };
 const adjustmentEmpty = { adjustment_type: 'correction', amount: '', posting_date: today(), notes: '' };
 const paymentMethods = ['cash', ...NON_CASH_METHODS.filter((method) => method !== 'e_wallet')];
-const closeStatuses = ['close', 'closed', 'paid', 'settled', 'lunas'];
-const openStatuses = ['open', 'unpaid', 'partial', 'debt', 'outstanding'];
-const normalizePOSStatus = (status = '') => closeStatuses.includes(String(status).toLowerCase()) ? 'Close' : 'Open';
 const formatDate = (value) => String(value || '-').slice(0, 10) || '-';
 
 export default function PosPage() {
@@ -29,6 +27,7 @@ export default function PosPage() {
   const [payment, setPayment] = useState(paymentEmpty);
   const [adjustment, setAdjustment] = useState(adjustmentEmpty);
   const [receipt, setReceipt] = useState(null);
+  const [selectedItemIds, setSelectedItemIds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState('');
   const [error, setError] = useState('');
@@ -48,6 +47,13 @@ export default function PosPage() {
   const firstReservation = reservations[0] || {};
   const roomText = reservations.map((reservation) => reservation.rooms?.room_number).filter(Boolean).join(', ') || '-';
   const nonCash = payment.payment_group === 'non_tunai';
+  const folioItems = useMemo(() => (selected?.folio_items || []).filter((item) => item.is_void !== true), [selected]);
+  const itemAmount = (item) => Number((item.line_total ?? (Number(item.qty || 0) * Number(item.unit_price || 0))) || 0);
+  const selectableItems = useMemo(() => folioItems.filter((item) => itemAmount(item) > 0 && !['paid', 'cancelled', 'refunded', 'void'].includes(String(item.payment_status || 'unpaid').toLowerCase())), [folioItems]);
+  const selectedItems = useMemo(() => folioItems.filter((item) => selectedItemIds.includes(item.id)), [folioItems, selectedItemIds]);
+  const selectedSubtotal = selectedItems.filter((item) => itemAmount(item) > 0).reduce((sum, item) => sum + itemAmount(item), 0);
+  const selectedAdjustment = selectedItems.filter((item) => itemAmount(item) < 0).reduce((sum, item) => sum + itemAmount(item), 0);
+  const selectedTotal = selectedSubtotal + selectedAdjustment;
 
   async function load(preferredId = selectedId, nextFilters = filters) {
     if (nextFilters.dateFrom && nextFilters.dateTo && nextFilters.dateFrom > nextFilters.dateTo) {
@@ -63,6 +69,7 @@ export default function PosPage() {
       const next = nextId ? await posApi.getFolio(nextId).catch(() => null) : null;
       setSelectedId(next?.id || '');
       setSelected(next);
+      setSelectedItemIds((ids) => ids.filter((id) => (next?.folio_items || []).some((item) => item.id === id && item.payment_status !== 'paid')));
       if (next?.id) setParams({ folio_id: next.id }, { replace: true });
       if (!next?.id && params.get('folio_id')) setParams({}, { replace: true });
     } catch (err) {
@@ -101,18 +108,20 @@ export default function PosPage() {
     event.preventDefault();
     if (!canTransact) return setError('Role Anda hanya dapat melihat data P.O.S.');
     if (!selected?.id) return setError('Pilih folio terlebih dahulu.');
-    const amount = Number(payment.amount || 0);
-    if (amount <= 0) return setError('Nominal pembayaran harus lebih besar dari 0.');
-    if (amount > Number(selected.balance_due || 0)) return setError('Overpayment belum diaktifkan. Nominal tidak boleh melebihi balance.');
+    const amount = Number(payment.amount || selectedTotal || 0);
+    if (selectedItemIds.length === 0) return setError('Pilih item tagihan yang akan dibayar.');
+    if (amount <= 0 || selectedTotal <= 0) return setError('Total item terpilih harus lebih besar dari 0.');
+    if (amount !== selectedTotal) return setError('Pembayaran sebagian per item belum didukung. Nominal harus sama dengan total item terpilih.');
     setSaving('payment');
     setError('');
     setSuccess('');
     try {
-      await posApi.postPayment(selected.id, { ...payment, paid_at: payment.paid_at ? new Date(payment.paid_at).toISOString() : new Date().toISOString() }, profile?.role, session?.user?.id || '');
-      const fresh = await posApi.getFolio(selected.id);
-      const lastPayment = (fresh.folio_payments || []).slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0];
-      setReceipt({ folio: fresh, payment: lastPayment });
+      const result = await posApi.postPayment(selected.id, { ...payment, amount: selectedTotal, selected_item_ids: selectedItemIds, paid_at: payment.paid_at ? new Date(payment.paid_at).toISOString() : new Date().toISOString() }, profile?.role, session?.user?.id || '');
+      const fresh = result.folio || await posApi.getFolio(selected.id);
+      const lastPayment = result.payment || (fresh.folio_payments || []).slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0];
+      setReceipt({ folio: fresh, payment: lastPayment, items: result.items || selectedItems });
       setPayment(paymentEmpty);
+      setSelectedItemIds([]);
       setSuccess('Payment berhasil diposting. No bill sudah terbentuk.');
       await load(fresh.id);
     } catch (err) {
@@ -164,7 +173,7 @@ export default function PosPage() {
 
     {!selected ? <div className="card muted">Pilih folio/bill terlebih dahulu.</div> : <section className="card pos-detail-panel"><div className="action-bar"><div><h2>{selected.folio_number || '-'}</h2><p className="muted">{selected.guests?.full_name || '-'} · Kamar {roomText} · {normalizePOSStatus(selected.status)}</p></div><div className="button-row"><button className={activePanel === 'summary' ? '' : 'secondary'} onClick={() => setActivePanel('summary')}>Summary</button><button className={activePanel === 'payment' ? '' : 'secondary'} onClick={() => setActivePanel('payment')}>Payment</button><button className={activePanel === 'history' ? '' : 'secondary'} onClick={() => setActivePanel('history')}>History</button>{canTransact && <button className={activePanel === 'adjustment' ? 'danger' : 'secondary'} onClick={() => setActivePanel('adjustment')}>Adjustment</button>}</div></div>
       {activePanel === 'summary' && <div className="pos-summary-card compact"><div><span>No Folio</span><strong>{selected.folio_number || '-'}</strong></div><div><span>Check-in/out</span><strong>{firstReservation.check_in_date || '-'} / {firstReservation.check_out_date || '-'}</strong></div><div><span>Grand Total</span><strong>{money.format(selected.grand_total || 0)}</strong></div><div><span>Total Paid</span><strong>{money.format(selected.paid_amount || 0)}</strong></div><div><span>Balance</span><strong>{money.format(selected.balance_due || 0)}</strong></div><div><span>Status</span><strong>{normalizePOSStatus(selected.status)}</strong></div></div>}
-      {activePanel === 'payment' && <PaymentPanel selected={selected} payment={payment} nonCash={nonCash} canTransact={canTransact} saving={saving} onPayment={updatePayment} onSubmit={submitPayment} />}
+      {activePanel === 'payment' && <PaymentPanel selected={selected} items={folioItems} selectedItemIds={selectedItemIds} setSelectedItemIds={setSelectedItemIds} selectableItems={selectableItems} selectedSubtotal={selectedSubtotal} selectedAdjustment={selectedAdjustment} selectedTotal={selectedTotal} payment={payment} nonCash={nonCash} canTransact={canTransact} saving={saving} onPayment={updatePayment} onSubmit={submitPayment} />}
       {activePanel === 'history' && <div className="two-column"><HistoryTable title="Payment History" rows={payments} /><HistoryTable title="Adjustment / Refund History" rows={adjustments} adjustment /></div>}
       {activePanel === 'adjustment' && canTransact && <AdjustmentPanel adjustment={adjustment} saving={saving} onChange={setAdjustment} onSubmit={submitAdjustment} />}
     </section>}
@@ -172,8 +181,14 @@ export default function PosPage() {
   </div>;
 }
 
-function PaymentPanel({ selected, payment, nonCash, canTransact, saving, onPayment, onSubmit }) {
-  return <form className="form-grid pos-form-panel" onSubmit={onSubmit}><label>Folio<input disabled value={selected?.folio_number || 'Pilih folio'} /></label><label>Balance<input disabled value={money.format(selected?.balance_due || 0)} /></label><label>Nominal<input type="number" min="1" max={selected?.balance_due || undefined} required value={payment.amount} onChange={(event) => onPayment({ amount: event.target.value })} /></label><label>Metode<select required value={payment.payment_method} onChange={(event) => onPayment({ payment_method: event.target.value })}>{paymentMethods.map((method) => <option key={method} value={method}>{method}</option>)}</select></label><label>Tanggal/Jam<input type="datetime-local" value={payment.paid_at} onChange={(event) => onPayment({ paid_at: event.target.value })} /></label>{nonCash && <label>No Referensi<input required value={payment.reference_number} onChange={(event) => onPayment({ reference_number: event.target.value })} /></label>}<label className="full">Catatan<textarea value={payment.notes} onChange={(event) => onPayment({ notes: event.target.value })} /></label><div className="button-row full"><button disabled={!canTransact || saving === 'payment' || !selected}>{saving === 'payment' ? 'Posting...' : 'Submit Payment'}</button>{!canTransact && <span className="muted">Role Anda read-only untuk transaksi kasir.</span>}</div></form>;
+function PaymentPanel({ selected, items, selectedItemIds, setSelectedItemIds, selectableItems, selectedSubtotal, selectedAdjustment, selectedTotal, payment, nonCash, canTransact, saving, onPayment, onSubmit }) {
+  const toggleItem = (itemId) => setSelectedItemIds((ids) => ids.includes(itemId) ? ids.filter((id) => id !== itemId) : [...ids, itemId]);
+  return <div className="page-stack"><div className="card table-card"><div className="action-bar"><div><h3>Item Tagihan Folio</h3><p className="muted">Pilih item belum dibayar. Item paid/cancelled/refunded/void dan nominal minus tidak bisa dibayar normal.</p></div><div className="button-row"><button type="button" onClick={() => setSelectedItemIds(selectableItems.map((item) => item.id))}>Pilih Semua Item Belum Dibayar</button><button type="button" className="secondary" onClick={() => setSelectedItemIds([])}>Clear Selection</button></div></div>{items.length === 0 ? <p className="muted">Belum ada item tagihan.</p> : <table><thead><tr><th>Pilih</th><th>Tanggal</th><th>Kategori</th><th>Deskripsi</th><th>Qty</th><th>Harga</th><th>Total</th><th>Status</th><th>Keterangan</th></tr></thead><tbody>{items.map((item) => {
+    const amount = Number((item.line_total ?? Number(item.qty || 0) * Number(item.unit_price || 0)) || 0);
+    const status = item.is_void ? 'void' : (item.payment_status || 'unpaid');
+    const disabled = amount <= 0 || ['paid', 'cancelled', 'refunded', 'void'].includes(String(status).toLowerCase());
+    return <tr key={item.id}><td><input type="checkbox" disabled={disabled} checked={selectedItemIds.includes(item.id)} onChange={() => toggleItem(item.id)} /></td><td>{item.posting_date || String(item.created_at || '').slice(0, 10) || '-'}</td><td>{item.item_type || '-'}</td><td>{item.description || '-'}</td><td>{item.qty || 1}</td><td>{money.format(item.unit_price || 0)}</td><td>{money.format(amount)}</td><td><span className={`badge ${String(status).toLowerCase()}`}>{status}</span></td><td>{amount < 0 ? 'Adjustment/minus mempengaruhi balance, tidak dibayar normal' : item.notes || '-'}</td></tr>;
+  })}</tbody></table>}</div><form className="form-grid pos-form-panel" onSubmit={onSubmit}><h3 className="full">Payment Box</h3><label>Folio<input disabled value={selected?.folio_number || 'Pilih folio'} /></label><label>Item dipilih<input disabled value={`${selectedItemIds.length} item`} /></label><label>Subtotal positif<input disabled value={money.format(selectedSubtotal)} /></label><label>Adjustment/minus<input disabled value={money.format(selectedAdjustment)} /></label><label>Total dibayar<input disabled value={money.format(selectedTotal)} /></label><label>Nominal<input type="number" readOnly value={selectedTotal || ''} onChange={(event) => onPayment({ amount: event.target.value })} /></label><label>Metode<select required value={payment.payment_method} onChange={(event) => onPayment({ payment_method: event.target.value })}>{paymentMethods.map((method) => <option key={method} value={method}>{method}</option>)}</select></label><label>Tanggal/Jam<input type="datetime-local" value={payment.paid_at} onChange={(event) => onPayment({ paid_at: event.target.value })} /></label>{nonCash && <label>No Referensi<input required value={payment.reference_number} onChange={(event) => onPayment({ reference_number: event.target.value })} /></label>}<label className="full">Catatan<textarea value={payment.notes} onChange={(event) => onPayment({ notes: event.target.value })} /></label><div className="button-row full"><button disabled={!canTransact || saving === 'payment' || !selected || selectedItemIds.length === 0 || selectedTotal <= 0}>{saving === 'payment' ? 'Posting...' : 'Bayar Item Terpilih'}</button>{!canTransact && <span className="muted">Role Anda read-only untuk transaksi kasir.</span>}</div></form></div>;
 }
 
 function AdjustmentPanel({ adjustment, saving, onChange, onSubmit }) {
@@ -185,7 +200,7 @@ function HistoryTable({ title, rows, adjustment = false }) {
 }
 
 function ReceiptModal({ receipt, onClose }) {
-  const { folio, payment } = receipt;
+  const { folio, payment, items = [] } = receipt;
   const amount = Number(payment?.amount || 0);
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="modal-card receipt-card" role="dialog" aria-modal="true"><div className="modal-header"><div><p className="eyebrow">Receipt</p><h2>{payment?.bill_no || '-'}</h2></div><button className="modal-close" onClick={onClose}>×</button></div><div className="receipt-body"><p><strong>Hotel MS</strong></p><p>No Folio: {folio?.folio_number || '-'}</p><p>Tamu: {folio?.guests?.full_name || '-'}</p><p>Tanggal: {String(payment?.paid_at || '').slice(0, 16).replace('T', ' ')}</p><p>Metode: {payment?.payment_method || '-'}</p><p>Nominal: {money.format(amount)}</p><p>Balance Setelah Payment: {money.format(folio?.balance_due || 0)}</p><p>Catatan: {payment?.notes || '-'}</p></div><div className="modal-footer"><IconButton icon={faReceipt} label="Print Receipt" title="Print Receipt" onClick={() => window.print()} /><button className="secondary" onClick={onClose}>Close</button></div></section></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="modal-card receipt-card" role="dialog" aria-modal="true"><div className="modal-header"><div><p className="eyebrow">Receipt</p><h2>{payment?.bill_no || '-'}</h2></div><button className="modal-close" onClick={onClose}>×</button></div><div className="receipt-body"><p><strong>Hotel MS</strong></p><p>No Folio: {folio?.folio_number || '-'}</p><p>Tamu: {folio?.guests?.full_name || '-'}</p><p>Tanggal: {String(payment?.paid_at || '').slice(0, 16).replace('T', ' ')}</p><p>Metode: {payment?.payment_method || '-'}</p><p>Nominal: {money.format(amount)}</p>{items.length > 0 && <div><strong>Item dibayar:</strong><ul>{items.map((item) => <li key={item.folio_item_id || item.id}>{item.description || '-'} — {money.format(item.amount || item.line_total || 0)}</li>)}</ul></div>}<p>Balance Setelah Payment: {money.format(folio?.balance_due || 0)}</p><p>Catatan: {payment?.notes || '-'}</p></div><div className="modal-footer"><IconButton icon={faReceipt} label="Print Receipt" title="Print Receipt" onClick={() => window.print()} /><button className="secondary" onClick={onClose}>Close</button></div></section></div>;
 }
