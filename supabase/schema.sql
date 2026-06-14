@@ -599,6 +599,8 @@ alter table folio_items add column if not exists description text;
 alter table folio_items add column if not exists qty numeric(10,2) not null default 1;
 alter table folio_items add column if not exists unit_price numeric(12,2) not null default 0;
 alter table folio_items add column if not exists posting_date date not null default current_date;
+alter table folio_items add column if not exists notes text;
+alter table folio_items add column if not exists created_from text not null default 'front_office';
 alter table folio_payments add column if not exists payment_type text not null default 'payment';
 alter table folio_payments add column if not exists payment_group text;
 alter table folio_payments add column if not exists payment_method text;
@@ -657,7 +659,7 @@ alter table folio_items add column if not exists voided_by uuid references profi
 alter table folio_items add column if not exists voided_at timestamptz;
 
 alter table folio_items drop constraint if exists folio_items_type_check;
-alter table folio_items add constraint folio_items_type_check check (item_type in ('room','extra_bed','breakfast','early_checkin','late_checkout','laundry','restaurant','minibar','other','discount','cancellation_fee','no_show_fee','refund','adjustment')) not valid;
+alter table folio_items add constraint folio_items_type_check check (item_type in ('room','extra_bed','breakfast','early_checkin','late_checkout','laundry','restaurant','minibar','damage','other','discount','cancellation_fee','no_show_fee','refund','adjustment','correction','discount_adjustment','other_adjustment')) not valid;
 alter table folio_items drop constraint if exists folio_items_qty_positive_check;
 alter table folio_items add constraint folio_items_qty_positive_check check (qty > 0) not valid;
 alter table folio_items drop constraint if exists folio_items_unit_price_non_negative_check;
@@ -666,8 +668,11 @@ alter table folio_items drop constraint if exists folio_items_description_requir
 alter table folio_items add constraint folio_items_description_required_check check (description is not null and length(trim(description)) > 0) not valid;
 alter table folio_items drop constraint if exists folio_items_posting_date_required_check;
 alter table folio_items add constraint folio_items_posting_date_required_check check (posting_date is not null) not valid;
+alter table folio_items drop constraint if exists folio_items_created_from_check;
+alter table folio_items add constraint folio_items_created_from_check check (created_from in ('front_office','folio','pos','system')) not valid;
 
 create index if not exists folio_items_active_folio_id_idx on folio_items(folio_id) where is_void = false;
+create index if not exists folio_items_created_from_idx on folio_items(created_from);
 
 drop policy if exists "authenticated read folio items" on folio_items;
 create policy "authenticated read folio items" on folio_items for select to authenticated using (true);

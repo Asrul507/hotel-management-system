@@ -20,7 +20,7 @@ export const PAYMENT_GROUPS = ['cash', 'non_tunai'];
 export const NON_CASH_METHODS = ['qris', 'transfer', 'debit_card', 'credit_card', 'e_wallet', 'other'];
 export const PAYMENT_METHODS = ['cash', ...NON_CASH_METHODS];
 export const FOLIO_STATUSES = ['open', 'closed', 'cancelled', 'debt', 'refunded', 'partial_refund'];
-export const FOLIO_ITEM_TYPES = ['room', 'extra_bed', 'breakfast', 'early_checkin', 'late_checkout', 'restaurant', 'laundry', 'minibar', 'other', 'discount', 'cancellation_fee', 'no_show_fee', 'refund', 'adjustment', 'correction', 'discount_adjustment', 'other_adjustment'];
+export const FOLIO_ITEM_TYPES = ['room', 'extra_bed', 'breakfast', 'early_checkin', 'late_checkout', 'restaurant', 'laundry', 'minibar', 'damage', 'other', 'discount', 'cancellation_fee', 'no_show_fee', 'refund', 'adjustment', 'correction', 'discount_adjustment', 'other_adjustment'];
 export const ADDITIONAL_CHARGE_TYPES = [
   ['extra_bed', 'Extra Bed'],
   ['breakfast', 'Breakfast'],
@@ -29,6 +29,7 @@ export const ADDITIONAL_CHARGE_TYPES = [
   ['laundry', 'Laundry'],
   ['restaurant', 'Restaurant'],
   ['minibar', 'Minibar'],
+  ['damage', 'Damage'],
   ['other', 'Other']
 ];
 
@@ -751,7 +752,10 @@ function validateFolioItemPayload(folioId, payload) {
     description: payload.description.trim(),
     qty,
     unit_price: unitPrice,
-    posting_date: postingDate
+    posting_date: postingDate,
+    notes: payload.notes?.trim() || null,
+    created_from: payload.created_from || 'front_office',
+    payment_status: payload.payment_status || 'unpaid'
   };
 }
 
@@ -768,7 +772,7 @@ async function nextBillNumber() {
 }
 
 function assertPosCashier(role) {
-  if (!['admin', 'super_admin', 'manager', 'frontdesk', 'receptionist'].includes(role)) throw new Error('Role ini tidak boleh memproses transaksi pembayaran.');
+  if (!['admin', 'super_admin', 'manager', 'cashier', 'frontdesk', 'receptionist'].includes(role)) throw new Error('Role ini tidak boleh memproses transaksi pembayaran.');
 }
 
 export const foliosApi = {
@@ -845,6 +849,12 @@ export const foliosApi = {
     const folio = await this.recalculateFolioTotals(folioId);
     await logAuditEvent('add_folio_item', 'folio_items', data.id, { folio_id: folioId, ...body });
     return folio;
+  },
+  async addPOSCharge(folioId, payload, role = '') {
+    if (!['admin', 'super_admin', 'cashier', 'frontdesk', 'receptionist'].includes(role)) throw new Error('Anda tidak punya akses menambahkan tagihan.');
+    if (!payload.description?.trim()) throw new Error('Keterangan wajib diisi.');
+    if (payload.item_type === 'other' && payload.description.trim().length < 5) throw new Error('Keterangan item Others wajib lebih detail.');
+    return this.addFolioItem(folioId, { ...payload, created_from: 'pos', payment_status: 'unpaid' });
   },
   async updateFolioItem(folioId, itemId, payload, role) {
     assertSuperAdmin(role);
@@ -1133,6 +1143,10 @@ export const posApi = {
     const grandTotal = moneyValue(folio?.grand_total ?? totalCharge + totalAdjustment);
     const balance = moneyValue(folio?.balance_due ?? Math.max(grandTotal - totalPayment + totalRefund, 0));
     return { totalCharge, totalAdjustment, totalPayment, totalRefund, grandTotal, balance, status: folio?.status || 'open' };
+  },
+  async postCharge(folioId, payload, role = '') {
+    if (!folioId) throw new Error('Pilih folio terlebih dahulu.');
+    return foliosApi.addPOSCharge(folioId, payload, role);
   },
   async postPayment(folioId, payload, role = '', cashierId = '') {
     return (payload.selected_item_ids || []).length ? foliosApi.addItemizedPayment(folioId, payload, role, cashierId) : foliosApi.addFolioPartialPayment(folioId, payload, role, cashierId);
