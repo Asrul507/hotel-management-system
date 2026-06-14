@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FO_STATUSES, hotelSettingsApi, roomTypesApi, roomsApi } from '../services/api';
 import { HK_STATUSES, allowedNextHkStatuses, deriveFoStatusFromHkStatus } from '../utils/roomStatus';
+import IconButton from '../components/IconButton';
+import { faPenToSquare } from '@fortawesome/free-solid-svg-icons';
 
 const hotelFormEmpty = { hotel_name: '', address: '', phone: '', tax_percent: 0, service_charge_percent: 0, tax_mode: 'exclusive', invoice_prefix: 'INV', default_checkin_time: '14:00', default_checkout_time: '12:00' };
 const typeFormEmpty = { code: '', name: '', description: '', base_rate: 0, max_occupancy: 2, facilities: '', is_active: true };
