@@ -1,9 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase, supabaseConfigError, isSupabaseConfigured } from '../config/supabase';
-import { getFriendlySupabaseError, isRateLimitError } from '../utils/supabaseError';
+import { getFriendlySupabaseError, handleSupabaseError, isAuthSessionError, isRateLimitError } from '../utils/supabaseError';
 
 const AuthContext = createContext(null);
 const AUTH_TIMEOUT_MS = 15000;
+const AUTH_CHECK_THROTTLE_MS = 30000;
 
 function withTimeout(promise, label, timeoutMs = AUTH_TIMEOUT_MS) {
   let timer;
@@ -21,6 +22,11 @@ export function AuthProvider({ children }) {
   const [authError, setAuthError] = useState(null);
   const [profileError, setProfileError] = useState(null);
   const authRequestRef = useRef(0);
+  const lastSessionCheckAtRef = useRef(0);
+  const isAuthCheckingRef = useRef(false);
+  const isRefreshingSessionRef = useRef(false);
+  const isAppInitializingRef = useRef(false);
+  const isAppInitializedRef = useRef(false);
   const initStartedRef = useRef(false);
   const mountedRef = useRef(false);
   const loadedProfileUserIdRef = useRef(null);
@@ -109,8 +115,14 @@ export function AuthProvider({ children }) {
   }, [loadProfile]);
 
   const initializeAuth = useCallback(async ({ force = false } = {}) => {
+    const now = Date.now();
+    if (!force && isAppInitializedRef.current && now - lastSessionCheckAtRef.current < AUTH_CHECK_THROTTLE_MS) return;
     if (initStartedRef.current && !force) return;
+    if (isAuthCheckingRef.current && !force) return;
     initStartedRef.current = true;
+    isAuthCheckingRef.current = true;
+    isAppInitializingRef.current = true;
+    lastSessionCheckAtRef.current = now;
 
     const requestId = authRequestRef.current + 1;
     authRequestRef.current = requestId;
@@ -130,9 +142,10 @@ export function AuthProvider({ children }) {
       await applySession(data?.session || null, 'initial', { requestId, forceProfile: force });
     } catch (error) {
       if (!mountedRef.current || requestId !== authRequestRef.current) return;
+      const handled = handleSupabaseError(error, 'AUTH_INIT');
       const message = getFriendlySupabaseError(error, 'Gagal memuat sesi login. Silakan coba lagi.');
       setAuthError(message);
-      if (!isRateLimitError(error)) {
+      if (!handled.keepSession && isAuthSessionError(error)) {
         sessionUserIdRef.current = null;
         setSession(null);
         profileRef.current = null;
@@ -140,6 +153,9 @@ export function AuthProvider({ children }) {
         loadedProfileUserIdRef.current = null;
       }
     } finally {
+      isAuthCheckingRef.current = false;
+      isAppInitializingRef.current = false;
+      isAppInitializedRef.current = true;
       if (mountedRef.current && requestId === authRequestRef.current) setLoading(false);
     }
   }, [applySession]);
@@ -149,10 +165,15 @@ export function AuthProvider({ children }) {
 
     const currentUserId = sessionUserIdRef.current;
     const nextUserId = nextSession?.user?.id || null;
-    if (event === 'TOKEN_REFRESHED' && currentUserId === nextUserId) {
-      sessionUserIdRef.current = nextUserId;
-      setSession(nextSession || null);
-      return;
+    if (event === 'TOKEN_REFRESHED') {
+      isRefreshingSessionRef.current = true;
+      if (nextSession?.user && currentUserId === nextUserId) {
+        sessionUserIdRef.current = nextUserId;
+        setSession(nextSession || null);
+        window.setTimeout(() => { isRefreshingSessionRef.current = false; }, 0);
+        return;
+      }
+      window.setTimeout(() => { isRefreshingSessionRef.current = false; }, 0);
     }
 
     const requestId = authRequestRef.current + 1;
@@ -203,6 +224,10 @@ export function AuthProvider({ children }) {
     profileError,
     configError: supabaseConfigError,
     isSupabaseConfigured,
+    isAuthChecking: isAuthCheckingRef.current,
+    isRefreshingSession: isRefreshingSessionRef.current,
+    isAppInitializing: isAppInitializingRef.current,
+    isAppInitialized: isAppInitializedRef.current,
     retryAuth: () => initializeAuth({ force: true }),
     retryProfile: async () => {
       if (!session?.user) return null;
