@@ -733,7 +733,7 @@ async function nextBillNumber() {
 }
 
 function assertPosCashier(role) {
-  if (!['admin', 'super_admin'].includes(role)) throw new Error('Hanya admin/super admin yang boleh memproses transaksi P.O.S.');
+  if (!['admin', 'super_admin', 'manager', 'frontdesk', 'receptionist'].includes(role)) throw new Error('Role ini tidak boleh memproses transaksi pembayaran.');
 }
 
 export const foliosApi = {
