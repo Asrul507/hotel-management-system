@@ -1085,14 +1085,28 @@ export const frontOfficeWorkflowApi = {
       payload.notes || ''
     ].filter(Boolean).join('\n');
 
-    const guest = await guestsApi.create({
-      full_name: payload.guest.full_name,
-      phone: payload.guest.phone,
-      email: payload.guest.email,
-      nik: payload.guest.nik,
-      address: payload.guest.address,
-      notes
-    });
+    let guest = null;
+    if (payload.guest_id) {
+      guest = await guestsApi.update(payload.guest_id, {
+        full_name: payload.guest.full_name,
+        phone: payload.guest.phone,
+        email: payload.guest.email,
+        nik: payload.guest.nik,
+        address: payload.guest.address,
+        notes
+      });
+    } else {
+      const existingGuests = await guestsApi.list({ status: 'active' }).catch(() => []);
+      const duplicate = existingGuests.find((row) => (payload.guest.nik && row.nik === payload.guest.nik) || (payload.guest.phone && row.phone === payload.guest.phone && String(row.full_name || '').toLowerCase() === payload.guest.full_name.trim().toLowerCase()));
+      guest = duplicate || await guestsApi.create({
+        full_name: payload.guest.full_name,
+        phone: payload.guest.phone,
+        email: payload.guest.email,
+        nik: payload.guest.nik,
+        address: payload.guest.address,
+        notes
+      });
+    }
     let folio = await foliosApi.createFolio({ guest_id: guest.id, notes: `Front Office ${payload.booking_type}\n${notes}` });
     const reservations = [];
     for (const room of rooms) {
@@ -1124,7 +1138,7 @@ export const frontOfficeWorkflowApi = {
           description: charge.description,
           qty,
           unit_price: unitPrice,
-          posting_date: payload.arrival || today(),
+          posting_date: charge.posting_date || payload.arrival || today(),
           notes: charge.notes,
           created_from: 'front_office',
           payment_status: 'unpaid'

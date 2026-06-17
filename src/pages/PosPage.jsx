@@ -61,6 +61,11 @@ export default function PosPage() {
   const selectedAdjustment = selectedItems.filter((item) => itemAmount(item) < 0).reduce((sum, item) => sum + itemAmount(item), 0);
   const selectedTotal = selectedSubtotal + selectedAdjustment;
 
+  useEffect(() => {
+    const defaultAmount = selectedItemIds.length ? selectedTotal : Number(selected?.balance_due || 0);
+    setPayment((current) => selected?.id ? { ...current, amount: defaultAmount > 0 ? String(defaultAmount) : '' } : current);
+  }, [selected?.id, selectedItemIds.length, selectedTotal, selected?.balance_due]);
+
   async function load(preferredId = selectedId, nextFilters = filters) {
     if (nextFilters.dateFrom && nextFilters.dateTo && nextFilters.dateFrom > nextFilters.dateTo) {
       setError('Tanggal dari tidak boleh lebih besar dari tanggal sampai.');
@@ -97,6 +102,7 @@ export default function PosPage() {
   async function selectFolio(id, panel = 'summary') {
     setSelectedId(id);
     setActivePanel(panel);
+    setPayment({ ...paymentEmpty, amount: '' });
     await load(id);
   }
 
@@ -114,7 +120,8 @@ export default function PosPage() {
     event.preventDefault();
     if (!canTransact) return setError('Role Anda hanya dapat melihat data P.O.S.');
     if (!selected?.id) return setError('Pilih folio terlebih dahulu.');
-    const amount = selectedItemIds.length ? selectedTotal : Number(payment.amount || 0);
+    const requestedAmount = Number(payment.amount || 0);
+    const amount = requestedAmount > 0 ? requestedAmount : (selectedItemIds.length ? selectedTotal : Number(selected.balance_due || 0));
     if (amount <= 0) return setError('Isi nominal partial payment atau pilih item unpaid untuk dibayar lunas per item.');
     if (selectedItemIds.length > 0 && selectedTotal <= 0) return setError('Total item terpilih harus lebih besar dari 0.');
     if (amount > Number(selected.balance_due || 0)) return setError('Payment melebihi balance. Overpayment belum diaktifkan.');
@@ -122,11 +129,12 @@ export default function PosPage() {
     setError('');
     setSuccess('');
     try {
-      const result = await posApi.postPayment(selected.id, { ...payment, amount, selected_item_ids: selectedItemIds, paid_at: payment.paid_at ? new Date(payment.paid_at).toISOString() : new Date().toISOString() }, profile?.role, session?.user?.id || '');
+      const itemizedIds = selectedItemIds.length > 0 && amount === selectedTotal ? selectedItemIds : [];
+      const result = await posApi.postPayment(selected.id, { ...payment, amount, selected_item_ids: itemizedIds, paid_at: payment.paid_at ? new Date(payment.paid_at).toISOString() : new Date().toISOString() }, profile?.role, session?.user?.id || '');
       const fresh = result.folio || await posApi.getFolio(selected.id);
       const lastPayment = result.payment || (fresh.folio_payments || []).slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0];
       setReceipt({ folio: fresh, payment: lastPayment, items: result.items || selectedItems });
-      setPayment(paymentEmpty);
+      setPayment({ ...paymentEmpty, amount: '' });
       setSelectedItemIds([]);
       setSuccess('Payment berhasil diposting. No bill sudah terbentuk.');
       await load(fresh.id);
@@ -233,7 +241,7 @@ function PaymentPanel({ selected, items, selectedItemIds, setSelectedItemIds, se
     const status = item.is_void ? 'void' : (item.payment_status || 'unpaid');
     const disabled = amount <= 0 || ['paid', 'cancelled', 'refunded', 'void'].includes(String(status).toLowerCase());
     return <tr key={item.id}><td><input type="checkbox" disabled={disabled} checked={selectedItemIds.includes(item.id)} onChange={() => toggleItem(item.id)} /></td><td>{item.posting_date || String(item.created_at || '').slice(0, 10) || '-'}</td><td>{item.item_type || '-'}</td><td>{item.description || '-'}</td><td>{item.qty || 1}</td><td>{money.format(item.unit_price || 0)}</td><td>{money.format(amount)}</td><td><span className={`badge ${String(status).toLowerCase()}`}>{status}</span></td><td>{amount < 0 ? 'Adjustment/minus mempengaruhi balance, tidak dibayar normal' : item.notes || '-'}</td></tr>;
-  })}</tbody></table>}</div><form className="form-grid pos-form-panel pos-payment-box" onSubmit={onSubmit}><h3 className="full">Payment Box</h3><label>Folio<input disabled value={selected?.folio_number || 'Pilih folio'} /></label><label>Item dipilih<input disabled value={`${selectedItemIds.length} item`} /></label><label>Subtotal positif<input disabled value={money.format(selectedSubtotal)} /></label><label>Adjustment/minus<input disabled value={money.format(selectedAdjustment)} /></label><label>Total item dipilih<input disabled value={money.format(selectedTotal)} /></label><label>Nominal<input type="number" min="1" max={selected?.balance_due || undefined} readOnly={selectedItemIds.length > 0} value={selectedItemIds.length ? selectedTotal : payment.amount} onChange={(event) => onPayment({ amount: event.target.value })} /></label><label>Metode<select required value={payment.payment_method} onChange={(event) => onPayment({ payment_method: event.target.value })}>{paymentMethods.map((method) => <option key={method} value={method}>{method}</option>)}</select></label><label>Tanggal/Jam<input type="datetime-local" value={payment.paid_at} onChange={(event) => onPayment({ paid_at: event.target.value })} /></label>{nonCash && <label>No Referensi<input required value={payment.reference_number} onChange={(event) => onPayment({ reference_number: event.target.value })} /></label>}<label className="full">Catatan<textarea value={payment.notes} onChange={(event) => onPayment({ notes: event.target.value })} /></label><div className="button-row full"><button disabled={!canTransact || saving === 'payment' || !selected || (selectedItemIds.length > 0 ? selectedTotal <= 0 : Number(payment.amount || 0) <= 0)}>{saving === 'payment' ? 'Posting...' : selectedItemIds.length > 0 ? 'Bayar Item Terpilih' : 'Post Partial Payment'}</button>{!canTransact && <span className="muted">Role Anda read-only untuk transaksi kasir.</span>}</div></form></div>;
+  })}</tbody></table>}</div><form className="form-grid pos-form-panel pos-payment-box" onSubmit={onSubmit}><h3 className="full">Payment Box</h3><label>Folio<input disabled value={selected?.folio_number || 'Pilih folio'} /></label><label>Item dipilih<input disabled value={`${selectedItemIds.length} item`} /></label><label>Subtotal positif<input disabled value={money.format(selectedSubtotal)} /></label><label>Adjustment/minus<input disabled value={money.format(selectedAdjustment)} /></label><label>Total item dipilih<input disabled value={money.format(selectedTotal)} /></label><label>Nominal Bayar<input type="number" min="1" max={selected?.balance_due || undefined} value={payment.amount} onChange={(event) => onPayment({ amount: event.target.value })} /></label><label>Metode<select required value={payment.payment_method} onChange={(event) => onPayment({ payment_method: event.target.value })}>{paymentMethods.map((method) => <option key={method} value={method}>{method}</option>)}</select></label><label>Tanggal/Jam<input type="datetime-local" value={payment.paid_at} onChange={(event) => onPayment({ paid_at: event.target.value })} /></label>{nonCash && <label>No Referensi<input required value={payment.reference_number} onChange={(event) => onPayment({ reference_number: event.target.value })} /></label>}<label className="full">Catatan<textarea value={payment.notes} onChange={(event) => onPayment({ notes: event.target.value })} /></label><div className="button-row full"><button disabled={!canTransact || saving === 'payment' || !selected || (selectedItemIds.length > 0 ? selectedTotal <= 0 : Number(payment.amount || 0) <= 0)}>{saving === 'payment' ? 'Posting...' : selectedItemIds.length > 0 ? 'Bayar Item Terpilih' : 'Post Partial Payment'}</button>{!canTransact && <span className="muted">Role Anda read-only untuk transaksi kasir.</span>}</div></form></div>;
 }
 
 function ChargeModal({ state, saving, onChange, onClose, onSubmit }) {
