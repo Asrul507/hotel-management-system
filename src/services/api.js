@@ -19,7 +19,7 @@ export const INVOICE_STATUSES = ['unpaid', 'partial', 'paid', 'refunded'];
 export const PAYMENT_GROUPS = ['cash', 'non_tunai'];
 export const NON_CASH_METHODS = ['qris', 'transfer', 'debit_card', 'credit_card', 'e_wallet', 'other'];
 export const PAYMENT_METHODS = ['cash', ...NON_CASH_METHODS];
-export const FOLIO_STATUSES = ['open', 'closed', 'cancelled', 'debt', 'refunded', 'partial_refund'];
+export const FOLIO_STATUSES = ['open', 'partial', 'closed', 'debt', 'cancelled', 'refunded', 'partial_refund'];
 export const FOLIO_ITEM_TYPES = ['room', 'extra_bed', 'breakfast', 'early_checkin', 'late_checkout', 'restaurant', 'laundry', 'minibar', 'damage', 'other', 'discount', 'cancellation_fee', 'no_show_fee', 'refund', 'adjustment', 'correction', 'discount_adjustment', 'other_adjustment'];
 export const ADDITIONAL_CHARGE_TYPES = [
   ['extra_bed', 'Extra Bed'],
@@ -830,8 +830,9 @@ export const foliosApi = {
     const refundAmount = payments.filter((payment) => payment.payment_type === 'refund').reduce((sum, payment) => sum + moneyValue(payment.amount), 0);
     const balanceDue = Math.max(grandTotal - paidAmount + refundAmount, 0);
     let status = nextStatus || folio.status || 'open';
-    if (!nextStatus) status = balanceDue <= 0 && paidAmount > 0 ? 'closed' : paidAmount > 0 ? 'debt' : 'open';
+    if (!nextStatus) status = balanceDue <= 0 && paidAmount > 0 ? 'closed' : paidAmount > 0 ? 'partial' : 'open';
     if (status === 'closed' && balanceDue > 0) status = 'debt';
+    if (status === 'partial' && balanceDue <= 0) status = 'closed';
     if (status === 'debt' && balanceDue <= 0) status = 'closed';
     if (refundAmount >= paidAmount && paidAmount > 0 && nextStatus === 'refunded') status = 'refunded';
     const body = { subtotal: chargeSubtotal, discount_amount: discountAmount, tax_amount: taxAmount, service_amount: serviceAmount, grand_total: grandTotal, paid_amount: paidAmount, refund_amount: refundAmount, balance_due: balanceDue, status, updated_at: new Date().toISOString() };
