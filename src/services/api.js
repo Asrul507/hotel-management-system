@@ -1,6 +1,7 @@
 import { requireSupabase } from '../config/supabase';
 import { getFriendlySupabaseError, handleSupabaseError, isRateLimitError, safeSupabaseQuery } from '../utils/supabaseError';
 import { normalizePOSStatus } from '../utils/posStatus';
+import { buildRoomChartCells, buildRoomChartDateRange, mergeRoomChartCells } from '../utils/roomChart';
 import {
   FO_STATUSES,
   HK_STATUSES,
@@ -1500,6 +1501,29 @@ export const maintenanceApi = {
     if (status === 'done') await roomsApi.updateHkStatus({ id: report.room_id, fo_status: 'unavailable' }, 'VD', { role: 'manager', notes: fix_notes || 'Maintenance done', fo_status: 'available' });
     await logAuditEvent('update_maintenance_status', 'maintenance_reports', report.id, { status });
     return data;
+  }
+};
+
+
+export const roomChartApi = {
+  async getRoomChartData({ startDate = today(), days = 7, roomTypeId = '', floor = '', status = 'all' } = {}) {
+    const dateRange = buildRoomChartDateRange(startDate, days);
+    const endExclusive = addDaysToDate(dateRange[dateRange.length - 1], 1);
+    const [rooms, reservations, stays, maintenance] = await Promise.all([
+      roomsApi.list({ includeInactive: false, roomTypeId }),
+      reservationsApi.list({ status: 'all', startDate, endDate: endExclusive }).catch(() => []),
+      staysApi.list().catch(() => []),
+      maintenanceApi.list().catch(() => [])
+    ]);
+    const filteredRooms = rooms.filter((room) => !floor || String(room.floor || '') === String(floor));
+    const rows = filteredRooms.map((room) => {
+      const cells = buildRoomChartCells(room, dateRange, { reservations, stays, maintenance });
+      const blocks = mergeRoomChartCells(cells);
+      return { room, cells, blocks };
+    }).filter((row) => status === 'all' || row.cells.some((cell) => cell.status === status));
+    const roomTypes = [...new Map(rooms.map((room) => room.room_types).filter(Boolean).map((type) => [type.id, type])).values()];
+    const floors = [...new Set(rooms.map((room) => room.floor).filter(Boolean).map(String))].sort();
+    return { dateRange, rows, roomTypes, floors };
   }
 };
 

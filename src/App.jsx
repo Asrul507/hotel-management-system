@@ -8,6 +8,7 @@ import MasterSettingsPage from './pages/MasterSettingsPage';
 import GuestsPage from './pages/GuestsPage';
 import ForecastPage from './pages/ForecastPage';
 import FrontOfficePage from './pages/FrontOfficePage';
+import RoomChartPage from './pages/RoomChartPage';
 import BillingPage from './pages/BillingPage';
 import PosPage from './pages/PosPage';
 import HousekeepingPage from './pages/HousekeepingPage';
@@ -44,6 +45,7 @@ export default function App() {
       <Route path="/tamu" element={<Navigate to="/guests" replace />} />
       <Route path="/forecast" element={allowed('forecast', <ForecastPage />)} />
       <Route path="/front-office" element={allowed('frontOffice', <FrontOfficePage />)} />
+      <Route path="/room-chart" element={allowed('roomChart', <RoomChartPage />)} />
       <Route path="/reservations" element={<Navigate to="/front-office" replace />} />
       <Route path="/checkin" element={<Navigate to="/front-office" replace />} />
       <Route path="/billing" element={allowed('billing', <BillingPage />)} />

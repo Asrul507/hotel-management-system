@@ -30,6 +30,7 @@ export default function AppLayout() {
         <nav className="top-module-nav" aria-label="Navigasi modul utama">
           <Link className={location.pathname === '/' ? 'active' : ''} to="/">Home</Link>
           {canAccess(profile?.role, 'frontOffice') && <Link className={location.pathname === '/front-office' ? 'active' : ''} to="/front-office">Front Office</Link>}
+          {canAccess(profile?.role, 'roomChart') && <Link className={location.pathname === '/room-chart' ? 'active' : ''} to="/room-chart">Room Chart</Link>}
           {canAccess(profile?.role, 'housekeeping') && <Link className={location.pathname === '/housekeeping' ? 'active' : ''} to="/housekeeping">Housekeeping</Link>}
           {canAccess(profile?.role, 'reports') && <Link className={location.pathname === '/reports' ? 'active' : ''} to="/reports">Report</Link>}
           {canAccess(profile?.role, 'pos') && <Link className={location.pathname === '/pos' ? 'active' : ''} to="/pos">P.O.S / Kasir</Link>}
