@@ -43,7 +43,7 @@ export default function DashboardPage() {
         <TodayTable title="Actual Departure Hari Ini" rows={lists.actualDepartures} type="actual-out" />
       </div>
     </>}
-    <div className="card"><h2>Quick Link Operasional</h2><div className="button-row"><Link className="button-link" to="/billing">Buat Reservasi</Link><Link className="button-link" to="/front-office">Front Office</Link><Link className="button-link" to="/housekeeping">Housekeeping</Link><Link className="button-link" to="/billing">Billing</Link></div></div>
+    <div className="card"><h2>Quick Link Operasional</h2><div className="button-row"><Link className="button-link" to="/front-office?tab=input">Buat Reservasi</Link><Link className="button-link" to="/front-office">Front Office</Link><Link className="button-link" to="/housekeeping">Housekeeping</Link><Link className="button-link" to="/billing">Billing</Link></div></div>
   </div>;
 }
 

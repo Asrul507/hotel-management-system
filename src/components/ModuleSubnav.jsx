@@ -1,12 +1,10 @@
 import { Link, useLocation } from 'react-router-dom';
 
 const frontOfficeTabs = [
-  ['/front-office', 'Expected Arrival'],
-  ['/front-office', 'Expected Departure'],
-  ['/front-office', 'Arrival'],
-  ['/front-office', 'Departure'],
-  ['/front-office', 'In House'],
-  ['/billing', 'Folio'],
+  ['/front-office?tab=input', 'Input Reservasi'],
+  ['/front-office?tab=bayar', 'Bayar Folio'],
+  ['/front-office?tab=report', 'Data / Report'],
+  ['/billing', 'Folio Teknis'],
   ['/guests', 'Guest Database']
 ];
 
@@ -31,7 +29,9 @@ function ModuleSubnav({ label, tabs, activeLabel }) {
   const location = useLocation();
   return <nav className="card action-toolbar module-tabs stable-subnav" aria-label={label}>
     {tabs.map(([to, title]) => {
-      const active = activeLabel ? title === activeLabel : location.pathname === to;
+      const currentPath = `${location.pathname}${location.search}`;
+      const defaultFrontOfficeInput = location.pathname === '/front-office' && !location.search && to === '/front-office?tab=input';
+      const active = activeLabel ? title === activeLabel : defaultFrontOfficeInput || currentPath === to || currentPath.startsWith(`${to}&`) || location.pathname === to;
       return <Link key={`${to}-${title}`} className={active ? 'action-pill active' : 'action-pill'} to={to}>{title}</Link>;
     })}
   </nav>;

@@ -297,7 +297,7 @@ export default function BillingPage() {
 
   return <div className="page-stack">
     <div className="page-header"><div><h1>Folio / Billing Workspace</h1><p>Kelola folio tamu, reservasi, charge, pembayaran, refund, dan debt dalam satu halaman.</p></div></div>
-    <FrontOfficeSubnav activeLabel="Folio" />
+    <FrontOfficeSubnav activeLabel="Folio Teknis" />
     {error && <div className="alert error">{error}</div>}
     {success && <div className="alert success">{success}</div>}
     <div className="billing-layout">

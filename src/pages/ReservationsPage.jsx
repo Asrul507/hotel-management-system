@@ -89,7 +89,7 @@ export default function ReservationsPage() {
   const formatDateTime = (value) => value ? String(value).slice(0, 16).replace('T', ' ') : '-';
 
   return <div className="page-stack">
-    <div className="page-header"><div><h1>Reservations</h1><p>Menu ini hanya untuk melihat dan memfilter reservasi. Reservasi baru dibuat dari menu Folio agar otomatis terhubung ke nomor bill/folio.</p></div><Link className="button-link" to="/billing">Buat Reservasi dari Folio</Link></div>
+    <div className="page-header"><div><h1>Reservations</h1><p>Menu ini hanya untuk melihat dan memfilter reservasi. Reservasi baru dibuat dari workflow Front Office agar otomatis terhubung ke nomor bill/folio.</p></div><Link className="button-link" to="/front-office?tab=input">Buat Reservasi di Front Office</Link></div>
     {error && <div className="alert error">{error}</div>}
     <div className="alert"><strong>Info:</strong> Pilih sub menu untuk Expected Arrival/Departure atau actual Arrival/Departure sesuai rentang tanggal. Default tanggal adalah hari ini.</div>
     <div className="card action-toolbar" role="toolbar" aria-label="Reservation view filters">
