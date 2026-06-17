@@ -1,10 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase, supabaseConfigError, isSupabaseConfigured } from '../config/supabase';
-import { getFriendlySupabaseError, handleSupabaseError, isAuthSessionError, isRateLimitError } from '../utils/supabaseError';
+import { RATE_LIMIT_MESSAGE, getFriendlySupabaseError, handleSupabaseError, isRateLimitError, shouldLogoutForAuthError } from '../utils/supabaseError';
 
 const AuthContext = createContext(null);
 const AUTH_TIMEOUT_MS = 15000;
 const AUTH_CHECK_THROTTLE_MS = 30000;
+const LOGIN_RATE_LIMIT_COOLDOWN_MS = 30000;
 
 function withTimeout(promise, label, timeoutMs = AUTH_TIMEOUT_MS) {
   let timer;
@@ -33,6 +34,7 @@ export function AuthProvider({ children }) {
   const profileRequestUserIdRef = useRef(null);
   const profileRef = useRef(null);
   const sessionUserIdRef = useRef(null);
+  const loginCooldownUntilRef = useRef(0);
 
   const unavailableClientError = useCallback(() => ({
     data: null,
@@ -145,7 +147,7 @@ export function AuthProvider({ children }) {
       const handled = handleSupabaseError(error, 'AUTH_INIT');
       const message = getFriendlySupabaseError(error, 'Gagal memuat sesi login. Silakan coba lagi.');
       setAuthError(message);
-      if (!handled.keepSession && isAuthSessionError(error)) {
+      if (shouldLogoutForAuthError(error)) {
         sessionUserIdRef.current = null;
         setSession(null);
         profileRef.current = null;
@@ -243,6 +245,8 @@ export function AuthProvider({ children }) {
     },
     signIn: async (email, password) => {
       if (!isSupabaseConfigured || !supabase) return unavailableClientError();
+      if (session?.user) return { data: { session }, error: null };
+      if (Date.now() < loginCooldownUntilRef.current) return { data: null, error: new Error(RATE_LIMIT_MESSAGE) };
 
       const requestId = authRequestRef.current + 1;
       authRequestRef.current = requestId;
@@ -258,7 +262,9 @@ export function AuthProvider({ children }) {
 
         if (result.error) {
           const message = getFriendlySupabaseError(result.error, 'Login gagal. Periksa email dan password lalu coba lagi.');
-          if (!isRateLimitError(result.error)) {
+          if (isRateLimitError(result.error)) {
+            loginCooldownUntilRef.current = Date.now() + LOGIN_RATE_LIMIT_COOLDOWN_MS;
+          } else if (shouldLogoutForAuthError(result.error)) {
             sessionUserIdRef.current = null;
             setSession(null);
             profileRef.current = null;
@@ -274,7 +280,9 @@ export function AuthProvider({ children }) {
         return result;
       } catch (error) {
         const message = getFriendlySupabaseError(error, 'Login gagal. Silakan coba lagi.');
-        if (!isRateLimitError(error)) {
+        if (isRateLimitError(error)) {
+          loginCooldownUntilRef.current = Date.now() + LOGIN_RATE_LIMIT_COOLDOWN_MS;
+        } else if (shouldLogoutForAuthError(error)) {
           profileRef.current = null;
           setProfile(null);
         }

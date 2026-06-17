@@ -44,10 +44,19 @@ let cachedAuthUserAt = 0;
 async function getCachedAuthUser() {
   const now = Date.now();
   if (cachedAuthUser && now - cachedAuthUserAt < 30000) return cachedAuthUser;
-  const { data } = await requireSupabase().auth.getSession();
-  cachedAuthUser = data?.session?.user || null;
-  cachedAuthUserAt = now;
-  return cachedAuthUser;
+  try {
+    const { data, error } = await requireSupabase().auth.getSession();
+    if (error) {
+      handleSupabaseError(error, 'AUTH_AUDIT_SESSION');
+      return cachedAuthUser;
+    }
+    cachedAuthUser = data?.session?.user || null;
+    cachedAuthUserAt = now;
+    return cachedAuthUser;
+  } catch (error) {
+    handleSupabaseError(error, 'AUTH_AUDIT_SESSION');
+    return cachedAuthUser;
+  }
 }
 export const isOutOfInventoryHk = isOutOfInventoryStatus;
 export const isOccupiedHk = isOccupiedStatus;
@@ -789,8 +798,10 @@ export const foliosApi = {
     return rows;
   },
   async getFolio(id) {
-    const { data, error } = await requireSupabase().from('folios').select(folioSelect).eq('id', id).single();
-    raise(error);
+    if (!id) throw new Error('Folio wajib dipilih.');
+    const { data, error } = await requireSupabase().from('folios').select(folioSelect).eq('id', id).maybeSingle();
+    if (error) throw new Error(parsePgError(error, 'Gagal memuat folio.'));
+    if (!data) throw new Error('Folio tidak ditemukan.');
     return normalizeFolio(data);
   },
   async createFolio({ guest_id, notes = '' }) {
