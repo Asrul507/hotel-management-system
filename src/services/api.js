@@ -19,7 +19,7 @@ export const INVOICE_STATUSES = ['unpaid', 'partial', 'paid', 'refunded'];
 export const PAYMENT_GROUPS = ['cash', 'non_tunai'];
 export const NON_CASH_METHODS = ['qris', 'transfer', 'debit_card', 'credit_card', 'e_wallet', 'other'];
 export const PAYMENT_METHODS = ['cash', ...NON_CASH_METHODS];
-export const FOLIO_STATUSES = ['open', 'closed', 'cancelled', 'debt', 'refunded', 'partial_refund'];
+export const FOLIO_STATUSES = ['open', 'partial', 'closed', 'debt', 'cancelled', 'refunded', 'partial_refund'];
 export const FOLIO_ITEM_TYPES = ['room', 'extra_bed', 'breakfast', 'early_checkin', 'late_checkout', 'restaurant', 'laundry', 'minibar', 'damage', 'other', 'discount', 'cancellation_fee', 'no_show_fee', 'refund', 'adjustment', 'correction', 'discount_adjustment', 'other_adjustment'];
 export const ADDITIONAL_CHARGE_TYPES = [
   ['extra_bed', 'Extra Bed'],
@@ -44,10 +44,19 @@ let cachedAuthUserAt = 0;
 async function getCachedAuthUser() {
   const now = Date.now();
   if (cachedAuthUser && now - cachedAuthUserAt < 30000) return cachedAuthUser;
-  const { data } = await requireSupabase().auth.getSession();
-  cachedAuthUser = data?.session?.user || null;
-  cachedAuthUserAt = now;
-  return cachedAuthUser;
+  try {
+    const { data, error } = await requireSupabase().auth.getSession();
+    if (error) {
+      handleSupabaseError(error, 'AUTH_AUDIT_SESSION');
+      return cachedAuthUser;
+    }
+    cachedAuthUser = data?.session?.user || null;
+    cachedAuthUserAt = now;
+    return cachedAuthUser;
+  } catch (error) {
+    handleSupabaseError(error, 'AUTH_AUDIT_SESSION');
+    return cachedAuthUser;
+  }
 }
 export const isOutOfInventoryHk = isOutOfInventoryStatus;
 export const isOccupiedHk = isOccupiedStatus;
@@ -789,8 +798,10 @@ export const foliosApi = {
     return rows;
   },
   async getFolio(id) {
-    const { data, error } = await requireSupabase().from('folios').select(folioSelect).eq('id', id).single();
-    raise(error);
+    if (!id) throw new Error('Folio wajib dipilih.');
+    const { data, error } = await requireSupabase().from('folios').select(folioSelect).eq('id', id).maybeSingle();
+    if (error) throw new Error(parsePgError(error, 'Gagal memuat folio.'));
+    if (!data) throw new Error('Folio tidak ditemukan.');
     return normalizeFolio(data);
   },
   async createFolio({ guest_id, notes = '' }) {
@@ -830,8 +841,9 @@ export const foliosApi = {
     const refundAmount = payments.filter((payment) => payment.payment_type === 'refund').reduce((sum, payment) => sum + moneyValue(payment.amount), 0);
     const balanceDue = Math.max(grandTotal - paidAmount + refundAmount, 0);
     let status = nextStatus || folio.status || 'open';
-    if (!nextStatus) status = balanceDue <= 0 && paidAmount > 0 ? 'closed' : paidAmount > 0 ? 'debt' : 'open';
+    if (!nextStatus) status = balanceDue <= 0 && paidAmount > 0 ? 'closed' : paidAmount > 0 ? 'partial' : 'open';
     if (status === 'closed' && balanceDue > 0) status = 'debt';
+    if (status === 'partial' && balanceDue <= 0) status = 'closed';
     if (status === 'debt' && balanceDue <= 0) status = 'closed';
     if (refundAmount >= paidAmount && paidAmount > 0 && nextStatus === 'refunded') status = 'refunded';
     const body = { subtotal: chargeSubtotal, discount_amount: discountAmount, tax_amount: taxAmount, service_amount: serviceAmount, grand_total: grandTotal, paid_amount: paidAmount, refund_amount: refundAmount, balance_due: balanceDue, status, updated_at: new Date().toISOString() };
@@ -1059,6 +1071,92 @@ export const foliosApi = {
     if (fee <= 0) return null;
     const folio = await this.ensureForReservation(reservation);
     return this.addFolioItem(folio.id, { reservation_id: reservation.id, item_type: 'no_show_fee', description: `No-show fee ${reservation.reservation_code}`, qty: 1, unit_price: fee });
+  }
+};
+
+
+export const frontOfficeWorkflowApi = {
+  async createReservationWorkflow(payload) {
+    const rooms = Array.isArray(payload.rooms) ? payload.rooms : [];
+    const otherCharges = Array.isArray(payload.other_charges) ? payload.other_charges : [];
+    if (!payload.guest?.full_name?.trim()) throw new Error('Nama tamu wajib diisi.');
+    if (!payload.booking_type) throw new Error('Booking type/segment wajib dipilih.');
+    if (!payload.arrival || !payload.departure || payload.departure <= payload.arrival) throw new Error('Departure harus setelah arrival.');
+    if (!rooms.length) throw new Error('Tambahkan minimal satu kamar.');
+    if (['Corporate', 'Government', 'Others'].includes(payload.booking_type) && (!payload.institution?.trim() || !payload.pic_name?.trim() || !payload.pic_phone?.trim())) throw new Error('Instansi, Nama PIC, dan No Telp PIC wajib untuk segment ini.');
+    if (payload.booking_type === 'OTA' && (!payload.ota_name?.trim() || !payload.ota_booking_code?.trim())) throw new Error('Nama OTA dan Kode Booking wajib untuk OTA.');
+
+    const notes = [
+      `Segment: ${payload.booking_type}`,
+      payload.institution ? `Instansi: ${payload.institution}` : '',
+      payload.pic_name ? `PIC: ${payload.pic_name}` : '',
+      payload.pic_phone ? `Telp PIC: ${payload.pic_phone}` : '',
+      payload.ota_name ? `OTA: ${payload.ota_name}` : '',
+      payload.ota_booking_code ? `Kode Booking: ${payload.ota_booking_code}` : '',
+      payload.notes || ''
+    ].filter(Boolean).join('\n');
+
+    let guest = null;
+    if (payload.guest_id) {
+      guest = await guestsApi.update(payload.guest_id, {
+        full_name: payload.guest.full_name,
+        phone: payload.guest.phone,
+        email: payload.guest.email,
+        nik: payload.guest.nik,
+        address: payload.guest.address,
+        notes
+      });
+    } else {
+      const existingGuests = await guestsApi.list({ status: 'active' }).catch(() => []);
+      const duplicate = existingGuests.find((row) => (payload.guest.nik && row.nik === payload.guest.nik) || (payload.guest.phone && row.phone === payload.guest.phone && String(row.full_name || '').toLowerCase() === payload.guest.full_name.trim().toLowerCase()));
+      guest = duplicate || await guestsApi.create({
+        full_name: payload.guest.full_name,
+        phone: payload.guest.phone,
+        email: payload.guest.email,
+        nik: payload.guest.nik,
+        address: payload.guest.address,
+        notes
+      });
+    }
+    let folio = await foliosApi.createFolio({ guest_id: guest.id, notes: `Front Office ${payload.booking_type}\n${notes}` });
+    const reservations = [];
+    for (const room of rooms) {
+      const roomType = room.room_type_id;
+      if (!roomType) throw new Error('Room type wajib diisi di setiap kamar.');
+      const rate = moneyValue(room.rate_per_night);
+      const reservation = await reservationsApi.create({
+        guest_id: guest.id,
+        room_type_id: roomType,
+        room_id: room.room_id || null,
+        check_in_date: payload.arrival,
+        check_out_date: payload.departure,
+        status: 'reserved',
+        room_rate: rate,
+        folio_id: folio.id,
+        notes
+      });
+      reservations.push(reservation);
+      folio = await foliosApi.addRoomChargeOnce(folio.id, reservation);
+      if (payload.status === 'checked_in') await staysApi.checkIn(reservation, room.room_id || null);
+    }
+    for (const charge of otherCharges) {
+      const qty = Number(charge.qty || 0);
+      const unitPrice = moneyValue(charge.unit_price);
+      if (!charge.description?.trim() && unitPrice > 0) throw new Error('Nama item other charge wajib diisi.');
+      if (qty > 0 && unitPrice > 0) {
+        folio = await foliosApi.addFolioItem(folio.id, {
+          item_type: charge.item_type || 'other',
+          description: charge.description,
+          qty,
+          unit_price: unitPrice,
+          posting_date: charge.posting_date || payload.arrival || today(),
+          notes: charge.notes,
+          created_from: 'front_office',
+          payment_status: 'unpaid'
+        });
+      }
+    }
+    return { guest, folio: await foliosApi.recalculateFolioTotals(folio.id), reservations };
   }
 };
 
