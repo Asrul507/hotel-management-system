@@ -44,6 +44,8 @@ export default function PosPage() {
   const settlement = useMemo(() => posApi.settlement(selected), [selected]);
   const pageStats = useMemo(() => ({
     open: folios.filter((folio) => normalizePOSStatus(folio.status) === 'Open').length,
+    partial: folios.filter((folio) => normalizePOSStatus(folio.status) === 'Partial').length,
+    debt: folios.filter((folio) => normalizePOSStatus(folio.status) === 'Debt').length,
     close: folios.filter((folio) => normalizePOSStatus(folio.status) === 'Close').length,
     balance: folios.reduce((sum, folio) => sum + Number(folio.balance_due || 0), 0)
   }), [folios]);
@@ -201,12 +203,12 @@ export default function PosPage() {
     {error && <div className="alert error">{error}</div>}
     {success && <div className="alert success">{success}</div>}
 
-    <section className="pos-kpi-row" aria-label="Ringkasan P.O.S"><div className="card"><h3>Total Open</h3><p>{pageStats.open}</p></div><div className="card"><h3>Total Close</h3><p>{pageStats.close}</p></div><div className="card"><h3>Total Balance / Outstanding</h3><p>{money.format(pageStats.balance)}</p></div></section>
+    <section className="pos-kpi-row" aria-label="Ringkasan P.O.S"><div className="card"><h3>Total Open</h3><p>{pageStats.open}</p></div><div className="card"><h3>Total Partial</h3><p>{pageStats.partial}</p></div><div className="card"><h3>Total Debt / Ledger</h3><p>{pageStats.debt}</p></div><div className="card"><h3>Total Done / Close</h3><p>{pageStats.close}</p></div><div className="card"><h3>Total Balance / Outstanding</h3><p>{money.format(pageStats.balance)}</p></div></section>
 
     <form className="card filter-grid pos-filter-bar" onSubmit={(event) => { event.preventDefault(); load('', filters); }}>
       <label>Tanggal dari<input type="date" value={filters.dateFrom} onChange={(event) => setFilters({ ...filters, dateFrom: event.target.value })} /></label>
       <label>Tanggal sampai<input type="date" value={filters.dateTo} onChange={(event) => setFilters({ ...filters, dateTo: event.target.value })} /></label>
-      <label>Status<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="all">All</option><option value="open">Open</option><option value="close">Close</option></select></label>
+      <label>Status<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}><option value="all">All</option><option value="open">Open</option><option value="partial">Partial</option><option value="debt">Debt / Ledger</option><option value="close">Done / Paid / Close</option></select></label>
       <label className="wide-filter">Search<input placeholder="No folio / no bill / nama / kamar" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} /></label>
       <div className="button-row"><IconButton icon={faFilter} label="Apply Filter" type="submit" title="Apply Filter" variant="primary" disabled={loading} /><button type="button" className="secondary" onClick={resetFilters} disabled={loading}>Reset Filter</button></div>
     </form>
