@@ -12,7 +12,7 @@ const addDays = (date, days) => { const next = new Date(`${date}T00:00:00`); nex
 const defaultFilters = () => ({ dateFrom: addDays(today(), -7), dateTo: today(), status: 'all', search: '' });
 const paymentEmpty = { amount: '', payment_group: 'cash', payment_method: 'cash', paid_at: new Date().toISOString().slice(0, 16), reference_number: '', notes: '' };
 const adjustmentEmpty = { adjustment_type: 'correction', amount: '', posting_date: today(), notes: '' };
-const chargeEmpty = { posting_date: today(), item_type: 'breakfast', description: '', qty: 1, unit_price: '' };
+const chargeEmpty = { charge_kind: '', posting_date: today(), item_type: 'breakfast', description: '', qty: 1, unit_price: '' };
 const paymentMethods = ['cash', ...NON_CASH_METHODS.filter((method) => method !== 'e_wallet')];
 const formatDate = (value) => String(value || '-').slice(0, 10) || '-';
 
@@ -246,22 +246,41 @@ function PaymentPanel({ selected, items, selectedItemIds, setSelectedItemIds, se
 
 function ChargeModal({ state, saving, onChange, onClose, onSubmit }) {
   const amount = Number(state.qty || 0) * Number(state.unit_price || 0);
+  const chooseKind = (kind) => {
+    if (kind === 'room') {
+      onChange({ ...state, charge_kind: 'room', item_type: 'room', description: state.description || 'Room charge tambahan', qty: state.qty || 1 });
+      return;
+    }
+    onChange({ ...state, charge_kind: 'other', item_type: state.item_type === 'room' ? 'breakfast' : state.item_type, description: state.item_type === 'room' ? 'Breakfast' : state.description });
+  };
   const updateItem = (itemType) => {
     const label = ADDITIONAL_CHARGE_TYPES.find(([key]) => key === itemType)?.[1] || '';
-    onChange({ ...state, item_type: itemType, description: itemType === 'other' ? '' : label });
+    onChange({ ...state, charge_kind: 'other', item_type: itemType, description: itemType === 'other' ? '' : label });
   };
   return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="pos-charge-title">
       <div className="modal-header"><div><p className="eyebrow">P.O.S Charge</p><h2 id="pos-charge-title">Tambah Tagihan</h2></div><button type="button" className="modal-close" onClick={onClose} aria-label="Tutup">×</button></div>
-      <form className="form-grid" onSubmit={onSubmit}>
+      {!state.charge_kind ? <div className="form-grid">
+        <p className="full muted">Pilih jenis tagihan. Keduanya masuk ke folio_items, bukan membuat reservasi baru.</p>
+        <button type="button" onClick={() => chooseKind('room')}>+ Tambah Kamar / Room Charge</button>
+        <button type="button" className="secondary" onClick={() => chooseKind('other')}>+ Tambah Other Charge</button>
+        <button type="button" className="secondary full" onClick={onClose}>Batal</button>
+      </div> : <form className="form-grid" onSubmit={onSubmit}>
+        <div className="button-row full"><button type="button" className={state.charge_kind === 'room' ? '' : 'secondary'} onClick={() => chooseKind('room')}>Kamar</button><button type="button" className={state.charge_kind === 'other' ? '' : 'secondary'} onClick={() => chooseKind('other')}>Other Charge</button></div>
         <label>Tanggal charge<input type="date" required value={state.posting_date || today()} onChange={(event) => onChange({ ...state, posting_date: event.target.value })} /></label>
-        <label>Item<select required value={state.item_type} onChange={(event) => updateItem(event.target.value)}>{ADDITIONAL_CHARGE_TYPES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
-        <label>Qty<input type="number" min="0.01" step="0.01" required value={state.qty} onChange={(event) => onChange({ ...state, qty: event.target.value })} /></label>
-        <label>Unit price<input type="number" min="0" step="0.01" required value={state.unit_price} onChange={(event) => onChange({ ...state, unit_price: event.target.value })} /></label>
+        {state.charge_kind === 'room' ? <>
+          <label>Qty malam / item<input type="number" min="0.01" step="0.01" required value={state.qty} onChange={(event) => onChange({ ...state, qty: event.target.value })} /></label>
+          <label>Rate / nominal kamar<input type="number" min="0" step="0.01" required value={state.unit_price} onChange={(event) => onChange({ ...state, unit_price: event.target.value })} /></label>
+          <label className="full">Keterangan kamar<textarea required value={state.description} onChange={(event) => onChange({ ...state, description: event.target.value })} placeholder="Contoh: Room charge tambahan kamar 201" /></label>
+        </> : <>
+          <label>Item<select required value={state.item_type} onChange={(event) => updateItem(event.target.value)}>{ADDITIONAL_CHARGE_TYPES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+          <label>Qty<input type="number" min="0.01" step="0.01" required value={state.qty} onChange={(event) => onChange({ ...state, qty: event.target.value })} /></label>
+          <label>Unit price<input type="number" min="0" step="0.01" required value={state.unit_price} onChange={(event) => onChange({ ...state, unit_price: event.target.value })} /></label>
+          <label className="full">Keterangan wajib<textarea required value={state.description} onChange={(event) => onChange({ ...state, description: event.target.value })} placeholder={state.item_type === 'other' ? 'Jelaskan detail charge Others' : 'Contoh: Breakfast tamu kamar 201'} /></label>
+        </>}
         <p><strong>Amount otomatis</strong><br />{money.format(amount || 0)}</p>
-        <label className="full">Keterangan wajib<textarea required value={state.description} onChange={(event) => onChange({ ...state, description: event.target.value })} placeholder={state.item_type === 'other' ? 'Jelaskan detail charge Others' : 'Contoh: Breakfast tamu kamar 201'} /></label>
         <div className="button-row full"><button disabled={saving || amount <= 0}>{saving ? 'Menyimpan...' : 'Simpan Tagihan'}</button><button type="button" className="secondary" onClick={onClose}>Batal</button></div>
-      </form>
+      </form>}
     </section>
   </div>;
 }
