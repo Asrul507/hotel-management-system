@@ -1042,6 +1042,14 @@ export const foliosApi = {
     await logAuditEvent(updated.status === 'debt' ? 'close_folio_debt' : 'close_folio', 'folios', folioId, { status: updated.status });
     return updated;
   },
+
+  async updateNotes(folioId, notes = '') {
+    if (!folioId) throw new Error('Folio wajib dipilih.');
+    const { data, error } = await requireSupabase().from('folios').update({ notes, updated_at: new Date().toISOString() }).eq('id', folioId).select(folioSelect).single();
+    if (error) throw new Error(parsePgError(error, 'Gagal menyimpan catatan folio.'));
+    await logAuditEvent('update_folio_notes', 'folios', folioId, { notes }).catch(() => {});
+    return normalizeFolio(data);
+  },
   async cancelFolio(folioId, notes = '') {
     const { error } = await requireSupabase().from('folios').update({ status: 'cancelled', notes, updated_at: new Date().toISOString() }).eq('id', folioId);
     raise(error);

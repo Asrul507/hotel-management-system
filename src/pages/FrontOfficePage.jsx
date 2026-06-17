@@ -160,13 +160,21 @@ function ChargeInput({ index, charge, updateCharge }) {
   return <div className="fo-inline-editor"><h3>Input Other Charge ke-{index + 1}</h3><div className="fo-form-grid compact-row"><label>Charge date<input type="date" value={charge.posting_date || today()} onChange={(e) => updateCharge(index, { posting_date: e.target.value })} /></label><label>Item<select value={charge.item_type} onChange={(e) => updateItem(e.target.value)}>{ADDITIONAL_CHARGE_TYPES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><label>Qty<input type="number" min="1" value={charge.qty} onChange={(e) => updateCharge(index, { qty: e.target.value })} /></label><label>Unit price<input type="number" min="0" value={charge.unit_price} onChange={(e) => updateCharge(index, { unit_price: e.target.value })} /></label><p><strong>Amount</strong><br />{money.format(amount)}</p><label className="full">Keterangan<input value={charge.description} onChange={(e) => updateCharge(index, { description: e.target.value })} /></label></div></div>;
 }
 
+
 function ReportTab({ onError, onSuccess }) {
   const { profile } = useAuth();
   const [reportTab, setReportTab] = useState('in_house');
   const [data, setData] = useState({ inHouse: [], ea: [], ed: [], forecast: [] });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState('');
+  const [openMenuId, setOpenMenuId] = useState('');
+  const [detailStay, setDetailStay] = useState(null);
+  const [detailNotes, setDetailNotes] = useState('');
+  const [moveState, setMoveState] = useState({ stay: null, roomId: '', reason: '', choices: [] });
+  const [extendState, setExtendState] = useState({ stay: null, extraNights: 1, rate: '' });
   const canDebtCheckout = ['admin', 'super_admin'].includes(profile?.role);
+  const todayDate = today();
+
   async function load() {
     setLoading(true);
     try {
@@ -175,9 +183,125 @@ function ReportTab({ onError, onSuccess }) {
     } catch (err) { onError(err.message); } finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (!openMenuId) return undefined;
+    const close = () => setOpenMenuId('');
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [openMenuId]);
+
   const summary = useMemo(() => ({ inHouse: data.inHouse.length, expectedArrival: data.ea.length, expectedDeparture: data.ed.length, roomAvailability: data.forecast[0]?.available_rooms ?? 0 }), [data]);
   const rows = { in_house: data.inHouse, ea: data.ea, ed: data.ed, forecast: data.forecast }[reportTab] || [];
-  async function checkIn(row) { setSaving(`checkin-${row.id}`); try { await staysApi.checkIn(row, row.room_id || ''); onSuccess('Check In berhasil.'); await load(); } catch (err) { onError(err.message); } finally { setSaving(''); } }
-  async function checkOut(row) { setSaving(`checkout-${row.id}`); try { const folioId = row.folio_id || row.reservations?.folio_id; const freshFolio = folioId ? await foliosApi.getFolio(folioId).catch(() => null) : null; const balance = Number(freshFolio?.balance_due ?? row.folios?.balance_due ?? row.reservations?.folios?.balance_due ?? 0); if (balance > 0) { if (!canDebtCheckout) throw new Error('Checkout dengan debt/ledger hanya admin/super_admin.'); if (folioId) await foliosApi.closeFolio(folioId); } await staysApi.checkOut(row, { earlyCheckoutApproved: true }); onSuccess(balance > 0 ? 'Check Out debt/ledger berhasil.' : 'Check Out berhasil.'); await load(); } catch (err) { onError(err.message); } finally { setSaving(''); } }
-  return <section className="fo-panel"><h2>Data / Report Front Office</h2><div className="fo-summary">{Object.entries(summary).map(([key, value]) => <div key={key}><span>{key}</span><strong>{value}</strong></div>)}</div><nav className="fo-tabs compact">{[['in_house','In House'],['ea','Expected Arrival'],['ed','Expected Departure'],['forecast','Forecast / Room Availability']].map(([key, label]) => <button key={key} type="button" className={reportTab === key ? 'active' : ''} onClick={() => setReportTab(key)}>{label}</button>)}</nav>{loading ? <p>Memuat report...</p> : rows.length === 0 ? <p className="muted">Tidak ada data.</p> : <table className="fo-table"><thead><tr>{reportTab === 'forecast' ? <><th>Tanggal</th><th>Inventory</th><th>Occupied</th><th>EA</th><th>ED</th><th>Available</th><th>Occ %</th></> : <><th>Kamar</th><th>Nama</th><th>Arrival</th><th>Departure</th><th>Status</th><th>Aksi</th></>}</tr></thead><tbody>{rows.map((row, index) => reportTab === 'forecast' ? <tr key={row.date || index}><td>{row.date}</td><td>{row.inventory_rooms || 0}</td><td>{row.occupied_rooms || 0}</td><td>{row.expected_arrival || 0}</td><td>{row.expected_departure || 0}</td><td>{row.available_rooms || 0}</td><td>{row.occupancy_percentage || row.occupancy_percent || 0}%</td></tr> : <tr key={row.id || index}><td>{row.rooms?.room_number || row.reservations?.rooms?.room_number || '-'}</td><td>{row.guests?.full_name || row.reservations?.guests?.full_name || '-'}</td><td>{row.check_in_date || row.reservations?.check_in_date || formatDate(row.actual_check_in)}</td><td>{row.check_out_date || row.reservations?.check_out_date || formatDate(row.actual_check_out)}</td><td><span className={`badge ${row.status}`}>{row.status || '-'}</span></td><td><div className="table-actions">{reportTab === 'ea' && row.status === 'reserved' && <button type="button" disabled={saving === `checkin-${row.id}`} onClick={() => checkIn(row)}>Check In</button>}{reportTab === 'in_house' && row.status === 'checked_in' && <button type="button" disabled={saving === `checkout-${row.id}`} onClick={() => checkOut(row)}>Check Out</button>}</div></td></tr>)}</tbody></table>}</section>;
+  const reservationOf = (stay) => stay?.reservations || stay || {};
+  const folioOf = (stay) => stay?.folios || stay?.reservations?.folios || null;
+  const expectedCheckoutOf = (stay) => reservationOf(stay).check_out_date || reservationOf(stay).checkout_date || '';
+  const guestNameOf = (stay) => stay?.guests?.full_name || stay?.reservations?.guests?.full_name || '-';
+  const roomNameOf = (stay) => stay?.rooms?.room_number || stay?.reservations?.rooms?.room_number || '-';
+
+  async function checkIn(row) {
+    if (saving) return;
+    setSaving(`checkin-${row.id}`);
+    try { await staysApi.checkIn(row, row.room_id || ''); onSuccess('Check In berhasil.'); await load(); }
+    catch (err) { onError(err.message); }
+    finally { setSaving(''); }
+  }
+
+  async function checkOut(row) {
+    if (saving) return;
+    const expectedCheckout = expectedCheckoutOf(row);
+    if (expectedCheckout && todayDate < expectedCheckout) {
+      const ok = window.confirm(`Tanggal departure tamu masih ${dateLabel(expectedCheckout)}. Jika dilanjutkan, tanggal check-out akan diubah menjadi hari ini. Lanjutkan?`);
+      if (!ok) return;
+    }
+    setSaving(`checkout-${row.id}`);
+    try {
+      const folioId = row.folio_id || row.reservations?.folio_id;
+      const freshFolio = folioId ? await foliosApi.getFolio(folioId).catch(() => null) : null;
+      const balance = Number(freshFolio?.balance_due ?? row.folios?.balance_due ?? row.reservations?.folios?.balance_due ?? 0);
+      if (balance > 0) {
+        if (!canDebtCheckout) throw new Error('Checkout dengan debt/ledger hanya admin/super_admin.');
+        if (folioId) await foliosApi.closeFolio(folioId);
+      }
+      await staysApi.checkOut(row, { earlyCheckoutApproved: true });
+      onSuccess(balance > 0 ? 'Check Out debt/ledger berhasil.' : 'Check Out berhasil.');
+      await load();
+    } catch (err) { onError(err.message); } finally { setSaving(''); }
+  }
+
+  async function openMoveRoom(stay) {
+    setOpenMenuId('');
+    setSaving(`move-load-${stay.id}`);
+    try {
+      const checkIn = reservationOf(stay).check_in_date || todayDate;
+      const checkOut = expectedCheckoutOf(stay) || addDaysToDate(todayDate, 1);
+      const choices = await roomsApi.availableForStay({ check_in_date: checkIn, check_out_date: checkOut, exclude_reservation_id: stay.reservation_id || '' });
+      setMoveState({ stay, roomId: '', reason: '', choices });
+    } catch (err) { onError(err.message); } finally { setSaving(''); }
+  }
+
+  async function submitMoveRoom(event) {
+    event.preventDefault();
+    if (!moveState.stay || saving) return;
+    setSaving(`move-${moveState.stay.id}`);
+    try {
+      await staysApi.moveRoom(moveState.stay, moveState.roomId, moveState.reason, profile?.role);
+      setMoveState({ stay: null, roomId: '', reason: '', choices: [] });
+      onSuccess('Pindah kamar berhasil. Rate tidak diubah otomatis; selisih tarif perlu diposting manual jika diperlukan.');
+      await load();
+    } catch (err) { onError(err.message); } finally { setSaving(''); }
+  }
+
+  function openDetail(stay) {
+    const folio = folioOf(stay);
+    setOpenMenuId('');
+    setDetailStay(stay);
+    setDetailNotes(folio?.notes || reservationOf(stay).notes || reservationOf(stay).special_notes || '');
+  }
+
+  async function saveDetailNotes(event) {
+    event.preventDefault();
+    if (!detailStay || saving) return;
+    const folioId = detailStay.folio_id || detailStay.reservations?.folio_id || folioOf(detailStay)?.id;
+    if (!folioId) return onError('Folio tidak ditemukan untuk menyimpan catatan.');
+    setSaving(`notes-${detailStay.id}`);
+    try {
+      await foliosApi.updateNotes(folioId, detailNotes);
+      setDetailStay(null);
+      onSuccess('Catatan folio berhasil disimpan.');
+      await load();
+    } catch (err) { onError(err.message); } finally { setSaving(''); }
+  }
+
+  function openExtend(stay) {
+    setOpenMenuId('');
+    setExtendState({ stay, extraNights: 1, rate: String(reservationOf(stay).room_rate || 0) });
+  }
+
+  async function submitExtend(event) {
+    event.preventDefault();
+    if (!extendState.stay || saving) return;
+    const reservation = reservationOf(extendState.stay);
+    const folioId = extendState.stay.folio_id || reservation.folio_id || folioOf(extendState.stay)?.id;
+    if (!folioId || !reservation?.id) return onError('Reservasi/folio tidak ditemukan untuk extend.');
+    const oldCheckout = expectedCheckoutOf(extendState.stay);
+    const newCheckout = addDaysToDate(oldCheckout, Math.max(Number(extendState.extraNights || 1), 1));
+    setSaving(`extend-${extendState.stay.id}`);
+    try {
+      await foliosApi.extendStay(folioId, reservation, { new_check_out_date: newCheckout, extra_nightly_rate: extendState.rate });
+      setExtendState({ stay: null, extraNights: 1, rate: '' });
+      onSuccess('Extend berhasil. Charge tambahan masuk ke folio.');
+      await load();
+    } catch (err) { onError(err.message); } finally { setSaving(''); }
+  }
+
+  function InHouseActions({ stay }) {
+    const canExtend = expectedCheckoutOf(stay) === todayDate;
+    return <div className="row-menu" onClick={(event) => event.stopPropagation()}><button type="button" className="kebab-button" aria-label="Aksi tamu in house" onClick={() => setOpenMenuId(openMenuId === stay.id ? '' : stay.id)}>⋮</button>{openMenuId === stay.id && <div className="row-menu-dropdown"><button type="button" onClick={() => openMoveRoom(stay)}>Pindah Kamar</button><button type="button" onClick={() => openDetail(stay)}>Detail</button><button type="button" onClick={() => checkOut(stay)} disabled={saving === `checkout-${stay.id}`}>Check Out</button>{canExtend ? <button type="button" onClick={() => openExtend(stay)}>Extend</button> : <button type="button" disabled title="Extend hanya tersedia pada tanggal departure.">Extend</button>}</div>}</div>;
+  }
+
+  return <section className="fo-panel"><h2>Data / Report Front Office</h2><div className="fo-summary">{Object.entries(summary).map(([key, value]) => <div key={key}><span>{key}</span><strong>{value}</strong></div>)}</div><nav className="fo-tabs compact">{[['in_house','In House'],['ea','Expected Arrival'],['ed','Expected Departure'],['forecast','Forecast / Room Availability']].map(([key, label]) => <button key={key} type="button" className={reportTab === key ? 'active' : ''} onClick={() => setReportTab(key)}>{label}</button>)}</nav>{loading ? <p>Memuat report...</p> : rows.length === 0 ? <p className="muted">Tidak ada data.</p> : <table className="fo-table"><thead><tr>{reportTab === 'forecast' ? <><th>Tanggal</th><th>Inventory</th><th>Occupied</th><th>EA</th><th>ED</th><th>Available</th><th>Occ %</th></> : <><th>Kamar</th><th>Nama</th><th>Arrival</th><th>Departure</th><th>Status</th><th>Aksi</th></>}</tr></thead><tbody>{rows.map((row, index) => reportTab === 'forecast' ? <tr key={row.date || index}><td>{row.date}</td><td>{row.inventory_rooms || 0}</td><td>{row.occupied_rooms || 0}</td><td>{row.expected_arrival || 0}</td><td>{row.expected_departure || 0}</td><td>{row.available_rooms || 0}</td><td>{row.occupancy_percentage || row.occupancy_percent || 0}%</td></tr> : <tr key={row.id || index}><td>{roomNameOf(row)}</td><td>{guestNameOf(row)}</td><td>{row.check_in_date || row.reservations?.check_in_date || formatDate(row.actual_check_in)}</td><td>{expectedCheckoutOf(row) || formatDate(row.actual_check_out)}</td><td><span className={`badge ${row.status}`}>{row.status || '-'}</span></td><td>{reportTab === 'in_house' && row.status === 'checked_in' ? <InHouseActions stay={row} /> : <div className="table-actions">{reportTab === 'ea' && row.status === 'reserved' && <button type="button" disabled={saving === `checkin-${row.id}`} onClick={() => checkIn(row)}>Check In</button>}</div>}</td></tr>)}</tbody></table>}
+    {moveState.stay && <div className="modal-backdrop"><form className="modal-card form-grid" onSubmit={submitMoveRoom}><div className="modal-header"><h2>Pindah Kamar</h2><button type="button" className="modal-close" onClick={() => setMoveState({ stay: null, roomId: '', reason: '', choices: [] })}>×</button></div><p><strong>{guestNameOf(moveState.stay)}</strong><br />Kamar lama: {roomNameOf(moveState.stay)}<br />{reservationOf(moveState.stay).check_in_date || '-'} - {expectedCheckoutOf(moveState.stay) || '-'}</p><label>Kamar baru<select required value={moveState.roomId} onChange={(event) => setMoveState({ ...moveState, roomId: event.target.value })}><option value="">Pilih kamar ready</option>{moveState.choices.map((room) => <option key={room.id} value={room.id}>{room.room_number} - {room.hk_status} - {room.room_types?.name || '-'}</option>)}</select></label><label className="full">Alasan pindah kamar<textarea required value={moveState.reason} onChange={(event) => setMoveState({ ...moveState, reason: event.target.value })} /></label><div className="button-row full"><button disabled={saving === `move-${moveState.stay.id}`}>Submit Pindah Kamar</button><button type="button" className="secondary" onClick={() => setMoveState({ stay: null, roomId: '', reason: '', choices: [] })}>Batal</button></div></form></div>}
+    {detailStay && <div className="modal-backdrop"><form className="modal-card form-grid" onSubmit={saveDetailNotes}><div className="modal-header"><h2>Detail In House</h2><button type="button" className="modal-close" onClick={() => setDetailStay(null)}>×</button></div><div className="full detail-list"><p><strong>Nama</strong><br />{guestNameOf(detailStay)}</p><p><strong>No Folio</strong><br />{folioOf(detailStay)?.folio_number || '-'}</p><p><strong>Kamar</strong><br />{roomNameOf(detailStay)}</p><p><strong>Arrival / Departure</strong><br />{reservationOf(detailStay).check_in_date || '-'} / {expectedCheckoutOf(detailStay) || '-'}</p><p><strong>Nights</strong><br />{nightsBetween(reservationOf(detailStay).check_in_date, expectedCheckoutOf(detailStay))}</p><p><strong>Segment</strong><br />{(folioOf(detailStay)?.notes || reservationOf(detailStay).notes || '').split('\n')[0] || '-'}</p><p><strong>Status / Balance</strong><br />{detailStay.status || '-'} / {money.format(folioOf(detailStay)?.balance_due || 0)}</p></div><label className="full">Catatan folio<textarea value={detailNotes} onChange={(event) => setDetailNotes(event.target.value)} /></label><div className="button-row full"><button disabled={saving === `notes-${detailStay.id}`}>Simpan Catatan</button><button type="button" className="secondary" onClick={() => setDetailStay(null)}>Tutup</button></div></form></div>}
+    {extendState.stay && <div className="modal-backdrop"><form className="modal-card form-grid" onSubmit={submitExtend}><div className="modal-header"><h2>Extend Stay</h2><button type="button" className="modal-close" onClick={() => setExtendState({ stay: null, extraNights: 1, rate: '' })}>×</button></div><p><strong>{guestNameOf(extendState.stay)}</strong><br />Kamar: {roomNameOf(extendState.stay)}<br />Departure lama: {dateLabel(expectedCheckoutOf(extendState.stay))}</p><label>Tambah night<input type="number" min="1" value={extendState.extraNights} onChange={(event) => setExtendState({ ...extendState, extraNights: event.target.value })} /></label><label>Rate/night<input type="number" min="0" value={extendState.rate} onChange={(event) => setExtendState({ ...extendState, rate: event.target.value })} /></label><p><strong>Departure baru</strong><br />{dateLabel(addDaysToDate(expectedCheckoutOf(extendState.stay), Math.max(Number(extendState.extraNights || 1), 1)))}</p><p><strong>Preview charge</strong><br />{money.format(Number(extendState.rate || 0) * Math.max(Number(extendState.extraNights || 1), 1))}</p><div className="button-row full"><button disabled={saving === `extend-${extendState.stay.id}`}>Submit Extend</button><button type="button" className="secondary" onClick={() => setExtendState({ stay: null, extraNights: 1, rate: '' })}>Batal</button></div></form></div>}
+  </section>;
 }
