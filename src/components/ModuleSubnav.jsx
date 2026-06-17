@@ -2,9 +2,7 @@ import { Link, useLocation } from 'react-router-dom';
 
 const frontOfficeTabs = [
   ['/front-office?tab=input', 'Input Reservasi'],
-  ['/front-office?tab=bayar', 'Bayar Folio'],
   ['/front-office?tab=report', 'Data / Report'],
-  ['/billing', 'Folio Teknis'],
   ['/guests', 'Guest Database']
 ];
 
