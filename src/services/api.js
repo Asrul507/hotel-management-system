@@ -773,6 +773,18 @@ function assertSuperAdmin(role) {
   if (role !== 'super_admin') throw new Error('Hanya super admin yang boleh edit/hapus transaksi.');
 }
 
+function assertAdminLevel(role) {
+  if (!['super_admin', 'admin', 'manager'].includes(role)) throw new Error('Hanya admin, manager, atau super admin yang boleh mengelola user.');
+}
+
+function normalizeUsername(value = '') {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, '');
+}
+
+function authEmailForUsername(username) {
+  return `${username}@hotel.local`;
+}
+
 async function nextBillNumber() {
   const prefix = `BILL-${billDatePart()}-`;
   const { data } = await requireSupabase().from('folio_payments').select('bill_no').ilike('bill_no', `${prefix}%`).order('bill_no', { ascending: false }).limit(1);
@@ -1568,6 +1580,8 @@ export const forecastApi = {
 
 
 export const profilesApi = {
+  normalizeUsername,
+  authEmailForUsername,
   async list({ search = '', role = 'all', status = 'all' } = {}) {
     let query = requireSupabase().from('profiles').select('*').order('created_at', { ascending: false });
     if (role !== 'all') query = query.eq('role', role);
@@ -1578,37 +1592,44 @@ export const profilesApi = {
     let rows = data || [];
     if (search?.trim()) {
       const value = search.trim().toLowerCase();
-      rows = rows.filter((profile) => [profile.email, profile.full_name, profile.phone, profile.role].some((field) => String(field || '').toLowerCase().includes(value)));
+      rows = rows.filter((profile) => [profile.username, profile.full_name, profile.phone, profile.role].some((field) => String(field || '').toLowerCase().includes(value)));
     }
     return rows;
   },
-  async createProfile(payload, role = '') {
-    assertSuperAdmin(role);
-    if (!payload.email?.trim()) throw new Error('Email wajib diisi.');
-    if (!payload.id?.trim()) throw new Error('User ID wajib diisi.');
+  async createUser(payload, role = '') {
+    assertAdminLevel(role);
+    const username = normalizeUsername(payload.username);
+    if (!username) throw new Error('Username wajib diisi.');
+    if (!/^[a-z0-9._-]+$/.test(username)) throw new Error('Username hanya boleh huruf kecil, angka, titik, underscore, atau strip.');
+    if (!payload.password || String(payload.password).length < 6) throw new Error('Password awal minimal 6 karakter.');
+    if (!payload.full_name?.trim()) throw new Error('Nama lengkap wajib diisi.');
+    const auth_email = authEmailForUsername(username);
     const body = {
-      id: payload.id.trim(),
-      email: payload.email.trim().toLowerCase(),
-      full_name: payload.full_name?.trim() || payload.email.trim(),
-      phone: payload.phone?.trim() || null,
+      full_name: payload.full_name.trim(),
+      username,
+      password: payload.password,
+      auth_email,
       role: payload.role || 'receptionist',
+      phone: payload.phone?.trim() || null,
       is_active: payload.is_active ?? true,
-      updated_at: new Date().toISOString()
+      must_change_password: payload.must_change_password ?? true
     };
-    Object.keys(body).forEach((key) => body[key] === undefined && delete body[key]);
-    const { data, error } = await requireSupabase().from('profiles').insert(body).select('*').single();
-    if (error) throw new Error(parsePgError(error, 'Gagal membuat user. Pastikan data user lengkap dan role Anda memiliki izin.'));
-    await logAuditEvent('create_profile_user', 'profiles', data.id, body);
+    const { data, error } = await requireSupabase().functions.invoke('admin-create-user', { body });
+    if (error) throw new Error(parsePgError(error, 'Gagal membuat auth user. Deploy Supabase Edge Function admin-create-user atau buat user secara manual sesuai dokumentasi.'));
+    await logAuditEvent('create_profile_user', 'profiles', data?.id || null, { ...body, password: undefined });
     return data;
   },
+  async createProfile(payload, role = '') {
+    return this.createUser(payload, role);
+  },
   async updateProfile(id, payload, role = '') {
-    assertSuperAdmin(role);
+    assertAdminLevel(role);
     const body = {
-      email: payload.email?.trim()?.toLowerCase() || null,
       full_name: payload.full_name?.trim() || null,
       phone: payload.phone?.trim() || null,
       role: payload.role,
       is_active: payload.is_active,
+      must_change_password: payload.must_change_password,
       updated_at: new Date().toISOString()
     };
     Object.keys(body).forEach((key) => body[key] === undefined && delete body[key]);

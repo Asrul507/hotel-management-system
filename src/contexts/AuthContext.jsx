@@ -6,6 +6,11 @@ const AuthContext = createContext(null);
 const AUTH_TIMEOUT_MS = 15000;
 const AUTH_CHECK_THROTTLE_MS = 30000;
 const LOGIN_RATE_LIMIT_COOLDOWN_MS = 30000;
+const USERNAME_LOGIN_ERROR = 'Username atau password salah, atau akun belum aktif.';
+
+function normalizeUsername(value = '') {
+  return String(value || '').trim().toLowerCase();
+}
 
 function withTimeout(promise, label, timeoutMs = AUTH_TIMEOUT_MS) {
   let timer;
@@ -80,6 +85,15 @@ export function AuthProvider({ children }) {
         return null;
       }
 
+      if (data.is_active === false) {
+        loadedProfileUserIdRef.current = null;
+        profileRef.current = null;
+        setProfile(null);
+        setProfileError('Akun nonaktif. Hubungi admin.');
+        await supabase.auth.signOut().catch(() => {});
+        return null;
+      }
+
       loadedProfileUserIdRef.current = userId;
       profileRef.current = data;
       setProfile(data);
@@ -105,8 +119,7 @@ export function AuthProvider({ children }) {
     setAuthError(null);
 
     if (nextSession?.user) {
-      await loadProfile(nextSession.user.id, { force: forceProfile, requestId });
-      return;
+      return await loadProfile(nextSession.user.id, { force: forceProfile, requestId });
     }
 
     loadedProfileUserIdRef.current = null;
@@ -114,6 +127,7 @@ export function AuthProvider({ children }) {
     profileRef.current = null;
     setProfile(null);
     setProfileError(null);
+    return null;
   }, [loadProfile]);
 
   const initializeAuth = useCallback(async ({ force = false } = {}) => {
@@ -239,6 +253,54 @@ export function AuthProvider({ children }) {
       setProfileError(null);
       try {
         return await loadProfile(session.user.id, { force: true, requestId });
+      } finally {
+        if (mountedRef.current && requestId === authRequestRef.current) setLoading(false);
+      }
+    },
+    signInWithUsername: async (username, password) => {
+      if (!isSupabaseConfigured || !supabase) return unavailableClientError();
+      if (session?.user) return { data: { session }, error: null };
+      if (Date.now() < loginCooldownUntilRef.current) return { data: null, error: new Error(RATE_LIMIT_MESSAGE) };
+
+      const normalizedUsername = normalizeUsername(username);
+      if (!normalizedUsername || !password) return { data: null, error: new Error(USERNAME_LOGIN_ERROR) };
+
+      const requestId = authRequestRef.current + 1;
+      authRequestRef.current = requestId;
+      setLoading(true);
+      setAuthError(null);
+      setProfileError(null);
+
+      try {
+        const lookup = await withTimeout(
+          supabase.rpc('get_auth_email_for_username', { p_username: normalizedUsername }),
+          'AUTH_USERNAME_LOOKUP'
+        );
+        if (lookup.error || !lookup.data) throw lookup.error || new Error(USERNAME_LOGIN_ERROR);
+
+        const result = await withTimeout(
+          supabase.auth.signInWithPassword({ email: lookup.data, password }),
+          'AUTH_SIGN_IN_USERNAME'
+        );
+
+        if (result.error) {
+          if (isRateLimitError(result.error)) loginCooldownUntilRef.current = Date.now() + LOGIN_RATE_LIMIT_COOLDOWN_MS;
+          setAuthError(USERNAME_LOGIN_ERROR);
+          return { ...result, error: new Error(USERNAME_LOGIN_ERROR) };
+        }
+
+        const nextSession = result.data?.session || null;
+        const loaded = await applySession(nextSession, 'sign_in_username', { requestId, forceProfile: true });
+        if (!loaded && nextSession?.user) {
+          await supabase.auth.signOut().catch(() => {});
+          setAuthError(USERNAME_LOGIN_ERROR);
+          return { data: null, error: new Error(USERNAME_LOGIN_ERROR) };
+        }
+        return result;
+      } catch (error) {
+        if (isRateLimitError(error)) loginCooldownUntilRef.current = Date.now() + LOGIN_RATE_LIMIT_COOLDOWN_MS;
+        setAuthError(USERNAME_LOGIN_ERROR);
+        return { data: null, error: new Error(USERNAME_LOGIN_ERROR) };
       } finally {
         if (mountedRef.current && requestId === authRequestRef.current) setLoading(false);
       }

@@ -5,7 +5,7 @@ create extension if not exists "pgcrypto";
 
 -- Keep existing enum types compatible for older databases, but app-facing status columns below use text.
 do $$ begin
-  create type app_role as enum ('super_admin','manager','receptionist','housekeeping','cashier');
+  create type app_role as enum ('super_admin','admin','manager','receptionist','frontdesk','housekeeping','cashier');
 exception when duplicate_object then null;
 end $$;
 
@@ -44,6 +44,9 @@ end $$;
 create table if not exists profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   full_name text not null,
+  username text unique,
+  auth_email text unique,
+  must_change_password boolean not null default false,
   role app_role not null default 'receptionist',
   phone text,
   is_active boolean not null default true,
@@ -681,11 +684,17 @@ create policy "authenticated manage folio items" on folio_items for all to authe
 
 -- Advanced operations additions (idempotent): user management, room move logs, and forecast/reservation lookup indexes.
 alter table profiles add column if not exists email text;
+alter table profiles add column if not exists username text;
+alter table profiles add column if not exists auth_email text;
+alter table profiles add column if not exists must_change_password boolean not null default false;
 alter table profiles add column if not exists phone text;
 alter table profiles add column if not exists is_active boolean not null default true;
 alter table profiles add column if not exists created_at timestamptz not null default now();
 alter table profiles add column if not exists updated_at timestamptz not null default now();
 create index if not exists profiles_email_idx on profiles(email);
+create unique index if not exists profiles_username_unique_idx on profiles(username) where username is not null;
+create unique index if not exists profiles_auth_email_unique_idx on profiles(auth_email) where auth_email is not null;
+create index if not exists profiles_username_active_idx on profiles(username, is_active);
 create index if not exists profiles_role_active_idx on profiles(role, is_active);
 
 create table if not exists room_move_logs (
@@ -727,7 +736,41 @@ as $$
   );
 $$;
 
+-- Username login helper: returns internal Supabase auth email for active username only.
+create or replace function public.get_auth_email_for_username(p_username text)
+returns text
+language sql
+security definer
+set search_path = public
+as $$
+  select auth_email
+  from public.profiles
+  where username = lower(trim(p_username))
+    and is_active = true
+  limit 1;
+$$;
+
+grant execute on function public.get_auth_email_for_username(text) to anon, authenticated;
+
+create or replace function public.current_user_is_admin_level()
+returns boolean
+language sql
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.profiles
+    where id = auth.uid()
+      and role in ('super_admin','admin','manager')
+      and is_active = true
+  );
+$$;
+
 drop policy if exists "super admin insert profiles" on profiles;
 drop policy if exists "super admin update profiles" on profiles;
 create policy "super admin insert profiles" on profiles for insert to authenticated with check (public.current_user_is_super_admin());
 create policy "super admin update profiles" on profiles for update to authenticated using (public.current_user_is_super_admin()) with check (public.current_user_is_super_admin());
+drop policy if exists "admin level insert profiles" on profiles;
+drop policy if exists "admin level update profiles" on profiles;
+create policy "admin level insert profiles" on profiles for insert to authenticated with check (public.current_user_is_admin_level());
+create policy "admin level update profiles" on profiles for update to authenticated using (public.current_user_is_admin_level()) with check (public.current_user_is_admin_level());
