@@ -6,7 +6,7 @@ const dateLabel = (value) => new Intl.DateTimeFormat('id-ID', { day: '2-digit', 
 const longDate = (value) => value ? new Intl.DateTimeFormat('id-ID', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' }).format(new Date(`${value}T00:00:00+07:00`)) : '-';
 
 const legend = [
-  ['VR', 'Ready'], ['VC', 'Not ready / gantung'], ['OR/OC', 'Occupied'], ['OOO', 'Maintenance'], ['OOS', 'Out of service'], ['EA', 'Expected Arrival'], ['ED', 'Expected Departure']
+  ['VR', 'Ready'], ['VC', 'Not ready / gantung'], ['OR/OD/OC', 'Occupied'], ['OOO', 'Maintenance'], ['OOS', 'Out of service'], ['DND/ONL', 'Special occupied'], ['EA', 'Expected Arrival'], ['ED', 'Expected Departure']
 ];
 
 export default function RoomChartPage() {

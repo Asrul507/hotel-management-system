@@ -34,11 +34,19 @@ export const ADDITIONAL_CHARGE_TYPES = [
   ['other', 'Other']
 ];
 
-export const today = () => new Date().toISOString().slice(0, 10);
+export function formatLocalDate(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+export const today = () => formatLocalDate(new Date());
 const reservationCode = () => `RSV-${Date.now()}`;
 const invoiceNumber = (prefix = 'INV') => `${prefix || 'INV'}-${Date.now()}`;
 const folioNumber = () => `FOL-${Date.now()}`;
-const billDatePart = (value = new Date()) => value.toISOString().slice(0, 10).replaceAll('-', '');
+const billDatePart = (value = new Date()) => formatLocalDate(value).replaceAll('-', '');
 const moneyValue = (value) => Number(value || 0);
 let cachedAuthUser = null;
 let cachedAuthUserAt = 0;
@@ -95,7 +103,7 @@ export function addDaysToDate(date, days) {
   const value = new Date(`${date}T00:00:00`);
   if (!Number.isFinite(value.getTime())) return '';
   value.setDate(value.getDate() + Number(days || 0));
-  return value.toISOString().slice(0, 10);
+  return formatLocalDate(value);
 }
 
 function eachDate(startDate, endDate) {
@@ -104,7 +112,7 @@ function eachDate(startDate, endDate) {
   const end = new Date(`${endDate}T00:00:00`);
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start > end) return dates;
   for (const current = new Date(start); current <= end; current.setDate(current.getDate() + 1)) {
-    dates.push(current.toISOString().slice(0, 10));
+    dates.push(formatLocalDate(current));
   }
   return dates;
 }
@@ -351,7 +359,7 @@ export const roomsApi = {
     return normalizeRoom(data);
   },
   async updateFoStatus(id, fo_status, role = '') {
-    if (!['super_admin', 'manager'].includes(role)) throw new Error('Hanya manager/super admin yang boleh mengubah FO status.');
+    if (!['super_admin', 'admin', 'manager'].includes(role)) throw new Error('Hanya admin/manager/super admin yang boleh mengubah FO status.');
     if (!FO_STATUSES.includes(fo_status)) throw new Error('Status FO tidak valid.');
     const { data, error } = await requireSupabase().from('rooms').update({ fo_status, status: fo_status, updated_at: new Date().toISOString() }).eq('id', id).select(roomSelect).single();
     if (error) throw new Error(parsePgError(error, 'Gagal memperbarui status FO.'));
@@ -361,13 +369,13 @@ export const roomsApi = {
   async updateHkStatus(room, hk_status, { role, notes = '', fo_status, allowGroupChange = false, hasCheckedInStay = false } = {}) {
     if (!HK_STATUSES.includes(hk_status)) throw new Error('Status HK tidak valid.');
     const normalized = normalizeRoom(room);
-    const privileged = ['super_admin', 'manager'].includes(role);
-    if (['cashier', 'receptionist'].includes(role)) throw new Error('Role ini tidak boleh mengubah status kamar manual.');
+    const privileged = ['super_admin', 'admin', 'manager'].includes(role);
+    if (['cashier', 'receptionist', 'frontdesk'].includes(role)) throw new Error('Role ini tidak boleh mengubah status kamar manual.');
     if (role === 'housekeeping' && normalized.fo_status === 'unavailable') throw new Error('Kamar FO unavailable tidak boleh diubah oleh housekeeping.');
     if (!canTransitionHkStatus(normalized, hk_status, role, { allowGroupChange, hasCheckedInStay })) {
       throw new Error('Transisi HK status tidak valid. Perubahan vacant ↔ occupied harus lewat check-in/check-out.');
     }
-    if (OUT_OF_INVENTORY_HK_STATUSES.includes(hk_status) && !privileged) throw new Error('OOO/OOS hanya boleh diset manager atau super admin.');
+    if (OUT_OF_INVENTORY_HK_STATUSES.includes(hk_status) && !privileged) throw new Error('OOO/OOS hanya boleh diset admin, manager, atau super admin.');
     if (OUT_OF_INVENTORY_HK_STATUSES.includes(hk_status) && !notes?.trim()) throw new Error('Catatan wajib diisi untuk status OOO/OOS.');
     if (isOccupiedStatus(hk_status) && isOutOfInventoryStatus(normalized.hk_status) && !hasCheckedInStay && !allowGroupChange) {
       throw new Error('Kembali dari OOO/OOS ke status occupied hanya boleh jika ada stay checked-in.');
@@ -384,9 +392,9 @@ export const roomsApi = {
   async bulkUpdateHkStatus(roomIds, targetStatus, notes = '', role = '') {
     if (!Array.isArray(roomIds) || roomIds.length === 0) throw new Error('Pilih minimal satu kamar untuk bulk update.');
     if (!HK_STATUSES.includes(targetStatus)) throw new Error('Target HK status tidak valid.');
-    const privileged = ['super_admin', 'manager'].includes(role);
-    if (['cashier', 'receptionist'].includes(role)) throw new Error('Role ini tidak boleh bulk update housekeeping.');
-    if (OUT_OF_INVENTORY_HK_STATUSES.includes(targetStatus) && !privileged) throw new Error('OOO/OOS hanya boleh diset manager atau super admin.');
+    const privileged = ['super_admin', 'admin', 'manager'].includes(role);
+    if (['cashier', 'receptionist', 'frontdesk'].includes(role)) throw new Error('Role ini tidak boleh bulk update housekeeping.');
+    if (OUT_OF_INVENTORY_HK_STATUSES.includes(targetStatus) && !privileged) throw new Error('OOO/OOS hanya boleh diset admin, manager, atau super admin.');
     if (OUT_OF_INVENTORY_HK_STATUSES.includes(targetStatus) && !notes?.trim()) throw new Error('Catatan wajib untuk bulk update OOO/OOS.');
 
     const rooms = await this.list();
@@ -1327,7 +1335,7 @@ export const staysApi = {
     if (moneyValue(normalized.deposit_amount) > 0 && !(folio.folio_payments || []).some((payment) => payment.notes === `Deposit ${normalized.reservation_code}`)) {
       await foliosApi.addFolioPayment(folio.id, { payment_group: 'cash', payment_method: 'cash', amount: normalized.deposit_amount, notes: `Deposit ${normalized.reservation_code}` });
     }
-    await roomsApi.updateHkStatus({ id: room_id, fo_status: 'available', hk_status: 'VC' }, 'OC', { role: 'manager', allowGroupChange: true });
+    await roomsApi.updateHkStatus({ id: room_id, fo_status: 'available', hk_status: 'VC' }, 'OR', { role: 'manager', allowGroupChange: true });
     await logAuditEvent('check_in', 'stays', stay.id, { reservation_id: normalized.id, room_id, folio_id: folio.id });
     return normalizeStay(stay);
   },
@@ -1364,7 +1372,7 @@ export const staysApi = {
     if (normalized.status !== 'checked_in') throw new Error('Hanya tamu in-house yang bisa dipindah kamar.');
     if (!newRoomId || newRoomId === normalized.room_id) throw new Error('Pilih kamar baru yang berbeda.');
     if (!reason?.trim()) throw new Error('Alasan pindah kamar wajib diisi.');
-    const checkInDate = normalized.reservations?.check_in_date || String(normalized.actual_check_in || normalized.checkin_at || today()).slice(0, 10);
+    const checkInDate = normalized.reservations?.check_in_date || formatLocalDate(normalized.actual_check_in || normalized.checkin_at || today());
     const checkOutDate = normalized.reservations?.check_out_date || addDaysToDate(today(), 1);
     const candidates = await roomsApi.availableForStay({
       check_in_date: checkInDate,
@@ -1382,7 +1390,7 @@ export const staysApi = {
       raise(reservationError);
     }
     await roomsApi.updateHkStatus({ id: oldRoomId, fo_status: 'available', hk_status: normalized.rooms?.hk_status || 'OC' }, 'VD', { role: 'manager', allowGroupChange: true, notes: `Room move: ${reason}` });
-    await roomsApi.updateHkStatus(newRoom, 'OC', { role: 'manager', allowGroupChange: true, notes: `Room move: ${reason}` });
+    await roomsApi.updateHkStatus(newRoom, 'OR', { role: 'manager', allowGroupChange: true, notes: `Room move: ${reason}` });
     const user = await getCachedAuthUser().catch(() => null);
     try {
       const { error: logError } = await requireSupabase().from('room_move_logs').insert({
@@ -1465,7 +1473,26 @@ export const billingApi = {
 };
 
 export const housekeepingApi = {
+  async rolloverOccupiedRoomStatuses() {
+    const date = today();
+    const [rooms, activeStays] = await Promise.all([roomsApi.list(), staysApi.active().catch(() => [])]);
+    const checkedInRoomIds = new Set(activeStays.map((stay) => stay.room_id).filter(Boolean));
+    const staleOccupiedRooms = rooms.filter((room) => {
+      if (!checkedInRoomIds.has(room.id)) return false;
+      if (!['OR', 'OC'].includes(room.hk_status)) return false;
+      const roomDate = formatLocalDate(room.updated_at || room.created_at);
+      if (room.hk_status === 'OR') {
+        const stay = activeStays.find((item) => item.room_id === room.id);
+        const checkInDate = formatLocalDate(stay?.actual_check_in || stay?.checkin_at || stay?.reservations?.check_in_date);
+        return checkInDate && checkInDate < date;
+      }
+      return roomDate && roomDate < date;
+    });
+    await Promise.all(staleOccupiedRooms.map((room) => roomsApi.updateHkStatus(room, 'OD', { role: 'manager', allowGroupChange: true, notes: 'Auto rollover occupied room to dirty for new hotel day' }).catch(() => null)));
+    return staleOccupiedRooms.length;
+  },
   async rooms({ hkStatus = 'all', floor = '', roomTypeId = '' } = {}) {
+    await this.rolloverOccupiedRoomStatuses().catch((error) => console.warn('HK rollover gagal:', error.message));
     let rooms = await roomsApi.list();
     if (hkStatus !== 'all') rooms = rooms.filter((room) => room.hk_status === hkStatus);
     if (floor) rooms = rooms.filter((room) => String(room.floor || '') === String(floor));

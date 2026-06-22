@@ -97,7 +97,7 @@ export default function CheckinPage() {
   };
 
   return <div className="page-stack">
-    <div className="page-header"><div><h1>Check-in / Check-out</h1><p>Check-in membuat stay in-house dan HK menjadi OC; check-out membuat invoice dan HK menjadi VD. Receptionist/manager/super admin dapat melakukan pindah kamar untuk tamu in-house.</p></div></div>
+    <div className="page-header"><div><h1>Check-in / Check-out</h1><p>Check-in membuat stay in-house dan HK menjadi OR; check-out membuat invoice dan HK menjadi VD. Receptionist/manager/super admin dapat melakukan pindah kamar untuk tamu in-house.</p></div></div>
     {error && <div className="alert error">{error}</div>}
     {moveForm.stay && <form className="card form-grid" onSubmit={submitMoveRoom}>
       <h2><FontAwesomeIcon icon={faRightLeft} aria-hidden="true" /> Pindah Kamar</h2>
