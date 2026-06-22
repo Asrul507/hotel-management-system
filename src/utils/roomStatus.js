@@ -1,23 +1,24 @@
 export const FO_STATUSES = ['available', 'unavailable'];
-export const VACANT_HK_STATUSES = ['VR', 'VD', 'VC', 'OOO'];
-export const OCCUPIED_HK_STATUSES = ['OR', 'OD', 'OC', 'OOO'];
+export const VACANT_HK_STATUSES = ['VR', 'VD', 'VC'];
+export const OCCUPIED_HK_STATUSES = ['OR', 'OD', 'OC'];
 export const OUT_OF_SERVICE_HK_STATUSES = ['OOS'];
 export const OUT_OF_INVENTORY_HK_STATUSES = ['OOO', 'OOS'];
+export const SPECIAL_HK_STATUSES = ['DND', 'ONL'];
 export const READY_FOR_RESERVATION_HK_STATUSES = ['VR'];
-export const HK_STATUSES = ['VR', 'VD', 'VC', 'OR', 'OD', 'OC', 'OOO', 'OOS'];
+export const HK_STATUSES = ['VR', 'VD', 'VC', 'OR', 'OD', 'OC', 'OOO', 'OOS', 'DND', 'ONL'];
 
-const PRIVILEGED_ROLES = ['super_admin', 'manager'];
+const PRIVILEGED_ROLES = ['super_admin', 'admin', 'manager'];
 
 export function isPrivilegedRoomRole(role) {
   return PRIVILEGED_ROLES.includes(role);
 }
 
 export function isVacantStatus(hkStatus) {
-  return ['VR', 'VD', 'VC'].includes(hkStatus);
+  return VACANT_HK_STATUSES.includes(hkStatus);
 }
 
 export function isOccupiedStatus(hkStatus) {
-  return ['OR', 'OD', 'OC'].includes(hkStatus);
+  return OCCUPIED_HK_STATUSES.includes(hkStatus);
 }
 
 export function isOutOfInventoryStatus(hkStatus) {
@@ -32,7 +33,7 @@ export function isReadyForReservation(room) {
 
 export function deriveFoStatusFromHkStatus(hkStatus, previousFoStatus = 'available') {
   if (OUT_OF_INVENTORY_HK_STATUSES.includes(hkStatus)) return 'unavailable';
-  if (isVacantStatus(hkStatus) || isOccupiedStatus(hkStatus)) return 'available';
+  if (isVacantStatus(hkStatus) || isOccupiedStatus(hkStatus) || SPECIAL_HK_STATUSES.includes(hkStatus)) return 'available';
   return FO_STATUSES.includes(previousFoStatus) ? previousFoStatus : 'available';
 }
 
@@ -40,11 +41,12 @@ export function roomStatusGroup(hkStatus) {
   if (isVacantStatus(hkStatus)) return 'vacant';
   if (isOccupiedStatus(hkStatus)) return 'occupied';
   if (isOutOfInventoryStatus(hkStatus)) return 'out_of_inventory';
+  if (SPECIAL_HK_STATUSES.includes(hkStatus)) return 'special';
   return 'vacant';
 }
 
 export function allowedNextHkStatuses(room = {}, role = '') {
-  if (['cashier', 'receptionist'].includes(role)) return [];
+  if (['cashier', 'receptionist', 'frontdesk'].includes(role)) return [];
 
   const hkStatus = room.hk_status || 'VC';
   const group = roomStatusGroup(hkStatus);
@@ -52,11 +54,13 @@ export function allowedNextHkStatuses(room = {}, role = '') {
 
   if (!privileged) {
     if (group === 'vacant') return ['VR', 'VD', 'VC'];
-    if (group === 'occupied') return ['OR', 'OD', 'OC'];
+    if (group === 'occupied') return ['OR', 'OD', 'OC', 'DND', 'ONL'];
+    if (group === 'special') return ['OR', 'OD', 'OC', 'DND', 'ONL'];
     return [];
   }
 
-  if (group === 'occupied') return ['OR', 'OD', 'OC', 'OOO', 'OOS'];
+  if (group === 'occupied') return ['OR', 'OD', 'OC', 'DND', 'ONL', 'OOO', 'OOS'];
+  if (group === 'special') return ['OR', 'OD', 'OC', 'DND', 'ONL', 'OOO', 'OOS'];
   if (group === 'out_of_inventory') return ['VR', 'VD', 'VC', 'OOO', 'OOS'];
   return ['VR', 'VD', 'VC', 'OOO', 'OOS'];
 }

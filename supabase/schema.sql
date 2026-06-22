@@ -5,7 +5,7 @@ create extension if not exists "pgcrypto";
 
 -- Keep existing enum types compatible for older databases, but app-facing status columns below use text.
 do $$ begin
-  create type app_role as enum ('super_admin','manager','receptionist','housekeeping','cashier');
+  create type app_role as enum ('super_admin','admin','manager','frontdesk','receptionist','housekeeping','cashier');
 exception when duplicate_object then null;
 end $$;
 
@@ -133,7 +133,7 @@ set hk_status = case coalesce(status, 'available')
   when 'out_of_order' then 'OOO'
   else coalesce(hk_status, 'VC')
 end
-where hk_status is null or hk_status not in ('VR','VC','VD','OR','OC','OD','OOO','OOS','DND','SLEEP OUT','ONL');
+where hk_status is null or hk_status not in ('VR','VC','VD','OR','OC','OD','OOO','OOS','DND','ONL');
 
 update rooms
 set fo_status = case
@@ -147,7 +147,7 @@ update rooms set status = fo_status where status is distinct from fo_status;
 alter table rooms drop constraint if exists rooms_fo_status_check;
 alter table rooms add constraint rooms_fo_status_check check (fo_status in ('available','unavailable')) not valid;
 alter table rooms drop constraint if exists rooms_hk_status_check;
-alter table rooms add constraint rooms_hk_status_check check (hk_status in ('VR','VC','VD','OR','OC','OD','OOO','OOS','DND','SLEEP OUT','ONL')) not valid;
+alter table rooms add constraint rooms_hk_status_check check (hk_status in ('VR','VC','VD','OR','OC','OD','OOO','OOS','DND','ONL')) not valid;
 alter table rooms drop constraint if exists rooms_ooo_oos_unavailable_check;
 alter table rooms add constraint rooms_ooo_oos_unavailable_check check (hk_status not in ('OOO','OOS') or fo_status = 'unavailable') not valid;
 
@@ -469,7 +469,7 @@ create index if not exists guests_nik_idx on guests(nik);
 alter table rooms drop constraint if exists rooms_fo_status_check;
 alter table rooms add constraint rooms_fo_status_check check (fo_status in ('available','unavailable')) not valid;
 alter table rooms drop constraint if exists rooms_hk_status_check;
-alter table rooms add constraint rooms_hk_status_check check (hk_status in ('VR','VC','VD','OR','OC','OD','OOO','OOS','DND','SLEEP OUT','ONL')) not valid;
+alter table rooms add constraint rooms_hk_status_check check (hk_status in ('VR','VC','VD','OR','OC','OD','OOO','OOS','DND','ONL')) not valid;
 alter table payments drop constraint if exists payments_positive_amount_check;
 alter table payments add constraint payments_positive_amount_check check (amount > 0) not valid;
 alter table invoices drop constraint if exists invoices_status_check;
@@ -627,7 +627,7 @@ alter table folio_items drop constraint if exists folio_items_type_check;
 alter table folio_items add constraint folio_items_type_check check (item_type in ('room','extra_bed','breakfast','early_check_in','late_check_out','restaurant','laundry','minibar','other','discount','cancellation_fee','refund','adjustment')) not valid;
 
 alter table rooms drop constraint if exists rooms_hk_status_check;
-alter table rooms add constraint rooms_hk_status_check check (hk_status in ('VR','VD','VC','OR','OD','OC','OOO','OOS')) not valid;
+alter table rooms add constraint rooms_hk_status_check check (hk_status in ('VR','VC','VD','OR','OD','OC','OOO','OOS','DND','ONL')) not valid;
 
 alter table audit_logs enable row level security;
 alter table folios enable row level security;

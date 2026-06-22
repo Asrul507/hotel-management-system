@@ -1,4 +1,4 @@
-export const ROOM_CHART_STATUSES = ['VR', 'VC', 'OR', 'OC', 'OOO', 'OOS', 'EA', 'ED'];
+export const ROOM_CHART_STATUSES = ['VR', 'VC', 'VD', 'OR', 'OD', 'OC', 'DND', 'ONL', 'OOO', 'OOS', 'EA', 'ED'];
 
 function chartToday() { return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' }); }
 function addChartDays(date, days) { const value = new Date(`${date}T00:00:00+07:00`); value.setDate(value.getDate() + Number(days || 0)); return value.toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' }); }
@@ -11,9 +11,13 @@ export function buildRoomChartDateRange(startDate = chartToday(), days = 7) {
 export function normalizeRoomChartStatus(rawStatus = '') {
   const value = String(rawStatus || '').trim().toUpperCase();
   if (['VR', 'READY', 'CLEAN', 'AVAILABLE'].includes(value)) return 'VR';
-  if (['VC', 'VD', 'DIRTY', 'CLEANING', 'NOT_READY'].includes(value)) return 'VC';
-  if (['OR', 'OD', 'OCCUPIED', 'CHECKED_IN'].includes(value)) return 'OR';
+  if (['VC', 'CLEANING', 'NOT_READY'].includes(value)) return 'VC';
+  if (['VD', 'DIRTY'].includes(value)) return 'VD';
+  if (['OR', 'OCCUPIED', 'CHECKED_IN'].includes(value)) return 'OR';
+  if (['OD'].includes(value)) return 'OD';
   if (['OC'].includes(value)) return 'OC';
+  if (['DND'].includes(value)) return 'DND';
+  if (['ONL'].includes(value)) return 'ONL';
   if (['OOO', 'OUT_OF_ORDER'].includes(value)) return 'OOO';
   if (['OOS', 'MAINTENANCE', 'UNAVAILABLE', 'OUT_OF_SERVICE'].includes(value)) return 'OOS';
   if (['EA', 'EXPECTED_ARRIVAL', 'ARRIVAL'].includes(value)) return 'EA';
@@ -64,7 +68,7 @@ export function buildRoomChartCells(room, dateRange, sourceData = {}) {
     if (stay) {
       const reservation = stay.reservations || {};
       const guest = stay.guests || reservation.guests || {};
-      const status = normalizeRoomChartStatus(room.hk_status === 'OR' ? 'OR' : 'OC');
+      const status = normalizeRoomChartStatus(['OR', 'OD', 'OC', 'DND', 'ONL'].includes(room.hk_status) ? room.hk_status : 'OC');
       return makeCell(room, date, status, {
         contextKey: `${status}:stay:${stay.id || stay.reservation_id || guest.id || guest.full_name}`,
         guestName: guest.full_name || '-',
@@ -131,7 +135,7 @@ export function buildRoomChartCells(room, dateRange, sourceData = {}) {
     }
 
     const hk = normalizeRoomChartStatus(room.hk_status || room.status);
-    if (['OOO', 'OOS', 'VC'].includes(hk)) return makeCell(room, date, hk, { contextKey: `${hk}:room:${room.id}:${room.notes || ''}`, notes: room.notes || '', source: 'room', sourceId: room.id, raw: room });
+    if (['OOO', 'OOS', 'VC', 'VD', 'DND', 'ONL'].includes(hk)) return makeCell(room, date, hk, { contextKey: `${hk}:room:${room.id}:${room.notes || ''}`, notes: room.notes || '', source: 'room', sourceId: room.id, raw: room });
     return makeCell(room, date, 'VR', { contextKey: `VR:room:${room.id}`, source: 'room', sourceId: room.id, raw: room });
   });
 }
@@ -152,8 +156,8 @@ export function mergeRoomChartCells(cells = []) {
 
 export function getRoomChartCellLabel(cell) {
   const status = normalizeRoomChartStatus(cell?.status);
-  if (['OR', 'OC', 'EA', 'ED'].includes(status)) return `${status} - ${cell?.guestName || '-'}`;
-  if (['OOO', 'OOS', 'VC'].includes(status)) return cell?.notes ? `${status} - ${cell.notes}` : status;
+  if (['OR', 'OD', 'OC', 'DND', 'ONL', 'EA', 'ED'].includes(status)) return `${status} - ${cell?.guestName || '-'}`;
+  if (['OOO', 'OOS', 'VC', 'VD'].includes(status)) return cell?.notes ? `${status} - ${cell.notes}` : status;
   return 'VR / Ready';
 }
 
